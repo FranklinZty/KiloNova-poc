@@ -8,10 +8,10 @@ use ark_std::{rand::Rng, UniformRand};
 
 use crate::ccs::cccs::Witness;
 use crate::ccs::ccs::{CCSError, CCS};
-use crate::ccs::util::{compute_all_sum_M_and_z_evals, compute_sum_eqM_on_y};
+use crate::ccs::util::{compute_all_sum_M_and_z_evals, compute_sum_eqM};
 
 use crate::ccs::pedersen::{Commitment, Params as PedersenParams, Pedersen};
-use crate::espresso::virtual_polynomial::{VirtualPolynomial, build_eq_x_r_DME};
+use crate::espresso::virtual_polynomial::{VirtualPolynomial};
 use crate::util::mle::matrix_to_mle;
 use crate::util::mle::vec_to_mle;
 
@@ -44,6 +44,7 @@ impl<C: CurveGroup> CCS<C> {
         // compute_all_sum_Mz_evals(&self.M, &z.to_vec(), r_x, self.s_prime)
         compute_all_sum_M_and_z_evals(&self.M, &z.to_vec(), r_x, r_y, self.s_prime)
     }
+
 
     pub fn to_accs<R: Rng>(
         &self,
@@ -85,8 +86,7 @@ impl<C: CurveGroup> ACCS<C> {
         
         for M_j in M_x_y_mle {
             // compute \sum_{y} eq(r_y, y) M(x,y)
-            let eq_y_r = build_eq_x_r_DME(&self.r_y).unwrap();
-            let sum_M_y: DenseMultilinearExtension<_> = compute_sum_eqM_on_y(M_j, eq_y_r, self.ccs.s_prime);
+            let sum_M_y: DenseMultilinearExtension<_> = compute_sum_eqM(M_j, &self.r_y, self.ccs.s_prime);
 
             let sum_M_y_virtual =
                 VirtualPolynomial::new_from_mle(&Arc::new(sum_M_y.clone()), C::ScalarField::one());
@@ -137,6 +137,7 @@ impl<C: CurveGroup> ACCS<C> {
 
 #[cfg(test)]
 pub mod test {
+
     use super::*;
     use ark_std::Zero;
 
@@ -151,7 +152,7 @@ pub mod test {
     fn test_accs_v_j() -> () {
         let mut rng = test_rng();
 
-        let ccs = get_test_ccs::<G1Projective>();
+        let ccs: CCS<ark_ec::short_weierstrass::Projective<ark_bls12_381::g1::Config>> = get_test_ccs::<G1Projective>();
         let z = get_test_z(3);
         ccs.check_relation(&z.clone()).unwrap();
 
@@ -160,9 +161,10 @@ pub mod test {
         // with our test vector comming from R1CS, v should have length 4
         assert_eq!(accs.v.len(), 4); // matrices A,B,C and z
 
+        // check that v_j matches with the L_j(x), i.e., \sum_{x} L_j(x) = v_j 
         let vec_L_j_x = accs.compute_Ls();
         
-        for (v_i, L_j_x) in accs.v[1..].into_iter().zip(vec_L_j_x) {
+        for (v_i, L_j_x) in accs.v[0..accs.v.len()-1].into_iter().zip(vec_L_j_x) {
             let sum_L_j_x = BooleanHypercube::new(ccs.s)
                 .into_iter()
                 .map(|x| L_j_x.evaluate(&x).unwrap())

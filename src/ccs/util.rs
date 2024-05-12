@@ -5,6 +5,7 @@ use std::ops::Add;
 
 use crate::espresso::multilinear_polynomial::fix_variables;
 use crate::espresso::multilinear_polynomial::scalar_mul;
+use crate::espresso::virtual_polynomial::build_eq_x_r_DME;
 
 use crate::util::hypercube::BooleanHypercube;
 use crate::util::mle::matrix_to_mle;
@@ -58,21 +59,22 @@ pub fn compute_sum_Mz<F: PrimeField>(
 }
 
 /// Return the multilinear polynomial p(x) = \sum_{y \in {0,1}^s'} eq(r_y, y) M_j(x, y)
-pub fn compute_sum_eqM_on_y<F: PrimeField>(
+pub fn compute_sum_eqM<F: PrimeField>(
     M_j: DenseMultilinearExtension<F>,
-    eq: DenseMultilinearExtension<F>,
+    r_y: &Vec<F>,
     s_prime: usize,
 ) -> DenseMultilinearExtension<F> {
     let mut sum_M = DenseMultilinearExtension {
         evaluations: vec![F::zero(); M_j.evaluations.len()],
         num_vars: M_j.num_vars - s_prime,
     };
+    let eq_y_r = build_eq_x_r_DME(r_y).unwrap();
 
     let bhc = BooleanHypercube::new(s_prime);
     for y in bhc.into_iter() {
         // In a slightly counter-intuitive fashion fix_variables() fixes the right-most variables of the polynomial. So
         // for a polynomial M(x,y) and a random field element r, if we do fix_variables(M,r) we will get M(x,r).
-        let eq_y = eq.evaluate(&y).unwrap();
+        let eq_y = eq_y_r.evaluate(&y).unwrap();
         let M_j_y: DenseMultilinearExtension<F> = fix_variables(&M_j, &y);
         let M_eq_y = scalar_mul(&M_j_y, &eq_y);
         sum_M = sum_M.add(M_eq_y);
@@ -96,11 +98,11 @@ pub fn compute_all_sum_M_and_z_evals<F: PrimeField>(
     let r_xy = [&r_x[..], &r_y[..]].concat();
 
     let mut v = Vec::with_capacity(M_x_y_mle.len()+1);
-    v.push(eval_z);
     for M_i in M_x_y_mle {
         let eval_M = M_i.evaluate(&r_xy).unwrap();
         v.push(eval_M);
     }
+    v.push(eval_z);
     v
 }
 
@@ -144,6 +146,25 @@ pub mod test {
             }
             assert_eq!(r, Fr::zero());
         }
+    }
+
+    #[test]
+    fn test_compute_sum_eqM_over_boolean_hypercube() -> () {
+        let ccs = get_test_ccs::<G1Projective>();
+        let r_y = vec![Fr::one(); ccs.s_prime];
+
+
+        // check that \sum_{y} eq(r_y, y) M_j(x,y) is correctly computed
+        let M_x_y_mle: Vec<DenseMultilinearExtension<Fr>> =
+            ccs.M.clone().into_iter().map(matrix_to_mle).collect();
+        let mut sum_eqM: Vec<DenseMultilinearExtension<Fr>> = Vec::with_capacity(ccs.t);
+
+        for M_j in M_x_y_mle {
+            sum_eqM.push(compute_sum_eqM(M_j, &r_y, ccs.s_prime));
+        }
+
+        //TODO: compare sum_eqM with the expected result (by sagemath)
+
     }
 
     /// Given M(x,y) matrix and a random field element `r`, test that ~M(r,y) is is an s'-variable polynomial which
