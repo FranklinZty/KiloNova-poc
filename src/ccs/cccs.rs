@@ -118,7 +118,7 @@ impl<C: CurveGroup> CCCS<C> {
             let M_j_y: DenseMultilinearExtension<C::ScalarField> = fix_variables(&M_j, &r_x_prime);
             let mut M_j_y_virtual =
                 VirtualPolynomial::new_from_mle(&Arc::new(M_j_y.clone()), C::ScalarField::one());
-            M_j_y_virtual.mul_by_mle(arc_z_y.clone(), C::ScalarField::one());
+            M_j_y_virtual.mul_by_mle(arc_z_y.clone(), C::ScalarField::one()).unwrap();
             vec_T_j_y.push(M_j_y_virtual);
         }
         vec_T_j_y

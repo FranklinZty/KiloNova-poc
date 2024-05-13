@@ -11,7 +11,7 @@ use crate::ccs::ccs::{CCSError, CCS};
 use crate::ccs::util::{compute_all_sum_M_and_z_evals, compute_sum_eqM};
 
 use crate::ccs::pedersen::{Commitment, Params as PedersenParams, Pedersen};
-use crate::espresso::virtual_polynomial::{VirtualPolynomial};
+use crate::espresso::virtual_polynomial::VirtualPolynomial;
 use crate::util::mle::matrix_to_mle;
 use crate::util::mle::vec_to_mle;
 
@@ -44,7 +44,6 @@ impl<C: CurveGroup> CCS<C> {
         // compute_all_sum_Mz_evals(&self.M, &z.to_vec(), r_x, self.s_prime)
         compute_all_sum_M_and_z_evals(&self.M, &z.to_vec(), r_x, r_y, self.s_prime)
     }
-
 
     pub fn to_accs<R: Rng>(
         &self,
@@ -91,6 +90,7 @@ impl<C: CurveGroup> ACCS<C> {
             let sum_M_y_virtual =
                 VirtualPolynomial::new_from_mle(&Arc::new(sum_M_y.clone()), C::ScalarField::one());
             let L_j_x = sum_M_y_virtual.build_f_hat(&self.r_x).unwrap();
+
             vec_L_j_x.push(L_j_x);
         }
         vec_L_j_x
@@ -161,16 +161,30 @@ pub mod test {
         // with our test vector comming from R1CS, v should have length 4
         assert_eq!(accs.v.len(), 4); // matrices A,B,C and z
 
-        // check that v_j matches with the L_j(x), i.e., \sum_{x} L_j(x) = v_j 
+        // check that \sum_x L_j_x = M_j(r_x,r_y)
         let vec_L_j_x = accs.compute_Ls();
-        
+        // let M_x_y_mle: Vec<DenseMultilinearExtension<Fr>> = ccs.M.iter().cloned().map(matrix_to_mle).collect();
+        // for j in 0..ccs.t {
+        //     // sanity check: sum_x L_j_x should equal M_j(r_x, r_y)
+        //     let M_j_y: DenseMultilinearExtension<Fr> = fix_variables(&M_x_y_mle[j], &accs.r_y);
+        //     let M_j_xy = fix_variables(&M_j_y, &accs.r_x);
+            
+        //     let mut sum_L_j_x = Fr::zero(); 
+        //     let bhc = BooleanHypercube::new(ccs.s);
+        //     for y in bhc.into_iter() {
+        //         let L_j_x_eval = vec_L_j_x[j].evaluate(&y).unwrap();
+        //         sum_L_j_x = sum_L_j_x + L_j_x_eval;
+        //     }
+        //     println!("M_j_xy: {:?}", M_j_xy.evaluations[0]);
+        //     println!("sum_L_j_x: {:?}", sum_L_j_x);
+        // }
+
         for (v_i, L_j_x) in accs.v[0..accs.v.len()-1].into_iter().zip(vec_L_j_x) {
             let sum_L_j_x = BooleanHypercube::new(ccs.s)
                 .into_iter()
                 .map(|x| L_j_x.evaluate(&x).unwrap())
                 .fold(Fr::zero(), |acc, result| acc + result);
-            println!("v_i: {:?}", v_i);
-            println!("sum_L_j_x: {:?}", sum_L_j_x)
+            assert_eq!(v_i, &sum_L_j_x);
         }
     }
 
