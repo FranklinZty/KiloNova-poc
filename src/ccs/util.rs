@@ -12,6 +12,27 @@ use crate::util::mle::matrix_to_mle;
 use crate::util::mle::vec_to_mle;
 use crate::util::vec::Matrix;
 
+/// Return a vector of evaluations p_j(r) = \sum_{y \in {0,1}^s'} eq(r_y, y) M_j(r, y)
+/// for all j values in 0..self.t
+pub fn compute_all_sum_eqM_evals<F: PrimeField>(
+    vec_M: &[Matrix<F>],
+    r_y: &Vec<F>,
+    r: &[F],
+    s_prime: usize,
+) -> Vec<F> {
+    // Convert all matrices to MLE
+    let M_x_y_mle: Vec<DenseMultilinearExtension<F>> =
+        vec_M.iter().cloned().map(matrix_to_mle).collect();
+
+    let mut v = Vec::with_capacity(M_x_y_mle.len());
+    for M_i in M_x_y_mle {
+        let sum_eqM = compute_sum_eqM(M_i, r_y, s_prime);
+        let v_i = sum_eqM.evaluate(r).unwrap();
+        v.push(v_i);
+    }
+    v
+}
+
 /// Return a vector of evaluations p_j(r) = \sum_{y \in {0,1}^s'} M_j(r, y) * z(y)
 /// for all j values in 0..self.t
 pub fn compute_all_sum_Mz_evals<F: PrimeField>(

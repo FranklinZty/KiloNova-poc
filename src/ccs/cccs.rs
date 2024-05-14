@@ -13,7 +13,7 @@ use crate::ccs::util::compute_sum_Mz;
 
 use crate::ccs::pedersen::{Commitment, Params as PedersenParams, Pedersen};
 use crate::espresso::virtual_polynomial::VirtualPolynomial;
-use crate::espresso::multilinear_polynomial::fix_variables;
+use crate::espresso::multilinear_polynomial::{fix_variables, fix_last_variables};
 use crate::util::hypercube::BooleanHypercube;
 use crate::util::mle::matrix_to_mle;
 use crate::util::mle::vec_to_mle;
@@ -115,7 +115,7 @@ impl<C: CurveGroup> CCCS<C> {
         let mut vec_T_j_y = Vec::with_capacity(self.ccs.t);
 
         for M_j in M_x_y_mle {
-            let M_j_y: DenseMultilinearExtension<C::ScalarField> = fix_variables(&M_j, &r_x_prime);
+            let M_j_y: DenseMultilinearExtension<C::ScalarField> = fix_last_variables(&M_j, &r_x_prime);
             let mut M_j_y_virtual =
                 VirtualPolynomial::new_from_mle(&Arc::new(M_j_y.clone()), C::ScalarField::one());
             M_j_y_virtual.mul_by_mle(arc_z_y.clone(), C::ScalarField::one()).unwrap();

@@ -3,7 +3,7 @@
 #![allow(non_upper_case_globals)]
 
 pub mod ccs;
-pub mod multifolding;
+pub mod genericfolding;
 
 pub mod espresso;
 pub mod util;

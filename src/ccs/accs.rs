@@ -2,7 +2,7 @@ use ark_ec::CurveGroup;
 use ark_poly::DenseMultilinearExtension;
 use ark_std::One;
 use std::sync::Arc;
-use crate::espresso::multilinear_polynomial::fix_variables;
+use crate::espresso::multilinear_polynomial::{fix_variables, fix_last_variables};
 
 use ark_std::{rand::Rng, UniformRand};
 
@@ -96,25 +96,26 @@ impl<C: CurveGroup> ACCS<C> {
         vec_L_j_x
     }
 
-    pub fn compute_Rs(&self, r_x_prime: &[C::ScalarField], z: &Vec<C::ScalarField>) -> Vec<VirtualPolynomial<C::ScalarField>> {
+    /// Compute all R_j(y) and S(y)
+    pub fn compute_R_S(&self, r_x_prime: &[C::ScalarField], z: &Vec<C::ScalarField>) -> Vec<VirtualPolynomial<C::ScalarField>> {
         // Convert all matrices to MLE
         let M_x_y_mle: Vec<DenseMultilinearExtension<C::ScalarField>> =
         self.ccs.M.clone().into_iter().map(matrix_to_mle).collect();
 
-        let mut vec_R_j_y = Vec::with_capacity(self.ccs.t+1);
+        let mut vec_RS_j_y = Vec::with_capacity(self.ccs.t+1);
 
         for M_j in M_x_y_mle {
-            let M_j_x: DenseMultilinearExtension<C::ScalarField> = fix_variables(&M_j, &r_x_prime);
+            let M_j_x: DenseMultilinearExtension<C::ScalarField> = fix_last_variables(&M_j, &r_x_prime);
             let M_j_x_virtual: VirtualPolynomial<_> =
                 VirtualPolynomial::new_from_mle(&Arc::new(M_j_x.clone()), C::ScalarField::one());
             let R_j_y = M_j_x_virtual.build_f_hat(&self.r_y).unwrap();
-            vec_R_j_y.push(R_j_y);
+            vec_RS_j_y.push(R_j_y);
         }
         let z_y = vec_to_mle(self.ccs.s_prime, z);
         let z_y_virtual = VirtualPolynomial::new_from_mle(&Arc::new(z_y.clone()), C::ScalarField::one());
         let S_y = z_y_virtual.build_f_hat(&self.r_y).unwrap();
-        vec_R_j_y.push(S_y);
-        vec_R_j_y
+        vec_RS_j_y.push(S_y);
+        vec_RS_j_y
     }
 
     /// Perform the check of the ACCS instance described at section 4.2
@@ -179,12 +180,12 @@ pub mod test {
         //     println!("sum_L_j_x: {:?}", sum_L_j_x);
         // }
 
-        for (v_i, L_j_x) in accs.v[0..accs.v.len()-1].into_iter().zip(vec_L_j_x) {
+        for (v_i, L_j_x) in accs.v.into_iter().skip(1).zip(vec_L_j_x) {
             let sum_L_j_x = BooleanHypercube::new(ccs.s)
                 .into_iter()
                 .map(|x| L_j_x.evaluate(&x).unwrap())
                 .fold(Fr::zero(), |acc, result| acc + result);
-            assert_eq!(v_i, &sum_L_j_x);
+            assert_eq!(v_i, sum_L_j_x);
         }
     }
 
