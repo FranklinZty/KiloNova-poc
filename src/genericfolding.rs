@@ -19,7 +19,7 @@ use crate::util::hypercube::BooleanHypercube;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-/// Proof defines a multifolding proof
+/// Proof defines a genericfolding proof
 #[derive(Debug)]
 pub struct Proof<C: CurveGroup> {
     pub sc_proof: SumCheckProof<C::ScalarField>,
@@ -58,8 +58,8 @@ impl<C: CurveGroup> Genericfolding<C> {
         (sigmas, taus)
     }
 
-    /// Compute the right-hand-side of step 5 of the multifolding scheme
-    pub fn compute_c_from_sigmas_and_taus(
+    /// Compute the left-hand-side of step 6 of the genericfolding scheme
+    pub fn compute_cx_from_sigmas_and_taus(
         ccs: &CCS<C>,
         vec_sigmas: &[Vec<C::ScalarField>],
         vec_taus: &[Vec<C::ScalarField>],
@@ -140,6 +140,17 @@ impl<C: CurveGroup> Genericfolding<C> {
             f = f.add(Q_i);
         }
         f
+    }
+
+    // TODO
+    /// Compute the arrays of epsilon_j and theta_j from step 10 corresponding to the ACCS and CCCS
+    pub fn compute_epsilon_and_theta() -> () {
+
+    }
+
+    /// Compute the left-hand-side of step 12 of the genericfolding scheme
+    pub fn compute_cy_from_epsilon_and_theta() -> () {
+
     }
 
     /// Compute g(y) polynomial for the given inputs.
@@ -285,7 +296,7 @@ impl<C: CurveGroup> Genericfolding<C> {
         }
     }
 
-    /// Perform the multifolding prover.
+    /// Perform the genericfolding prover.
     ///
     /// Given μ accs instances and ν CCS instances, fold them into a single accs instance. Since
     /// this is the prover, also fold their witness.
@@ -435,7 +446,7 @@ impl<C: CurveGroup> Genericfolding<C> {
         )
     }
 
-    /// Perform the multifolding verifier:
+    /// Perform the genericfolding verifier:
     ///
     /// Given μ accs instances and ν CCS instances, fold them into a single accs instance.
     ///
@@ -487,7 +498,7 @@ impl<C: CurveGroup> Genericfolding<C> {
         let r_y_prime = sumcheck_subclaim.point.clone();
 
         // Step 5: Finish verifying sumcheck (verify the claim c)
-        let c = Self::compute_c_from_sigmas_and_taus(
+        let c = Self::compute_cx_from_sigmas_and_taus(
             &new_instances[0].ccs,
             &proof.sigmas,
             &proof.taus,
@@ -542,7 +553,7 @@ pub mod test {
     use ark_bls12_381::{Fr, G1Projective};
 
     const rnd : u32 = 1;
-    // NIMFS: Non Interactive Multifolding Scheme
+    // NIMFS: Non Interactive Genericfolding Scheme
     type NIMFS = Genericfolding<G1Projective>;
 
     #[test]
@@ -562,7 +573,7 @@ pub mod test {
             let alpha: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
             let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
 
-            // Initialize a multifolding object
+            // Initialize a genericfolding object
             let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
             let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
             let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
@@ -588,7 +599,7 @@ pub mod test {
             // c = (sum gamma^j * e1 * sigma_j) + gamma^{t+1} * e2 * sum c_i * prod tau_j
             // from compute_c_from_sigmas_and_taus
             let expected_c = f.evaluate(&r_x_prime).unwrap();
-            let c = NIMFS::compute_c_from_sigmas_and_taus(
+            let c = NIMFS::compute_cx_from_sigmas_and_taus(
                 &ccs,
                 &sigmas,
                 &taus,
@@ -618,7 +629,7 @@ pub mod test {
         let gamma: Fr = Fr::rand(&mut rng);
         let alpha: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
 
-        // Initialize a multifolding object
+        // Initialize a genericfolding object
         let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
         let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
         let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
@@ -676,7 +687,6 @@ pub mod test {
         // sum of gamma^j * v_j over j \in [t]
         assert_eq!(f_on_bhc, sum_v_j_gamma);
     }
-    // TODO: run this test function
 
     #[test]
     fn test_fold() -> () {
@@ -690,7 +700,7 @@ pub mod test {
         let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
         let r_y_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
 
-        // Initialize a multifolding object
+        // Initialize a genericfolding object
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
         let (running_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
 
@@ -729,9 +739,9 @@ pub mod test {
         folded.check_relation(&pedersen_params, &w_folded).unwrap();
     }
 
-    /// Perform multifolding of an accs instance with a CCCS instance (as described in the paper)
+    /// Perform genericfolding of an accs instance with a CCCS instance (as described in the paper)
     #[test]
-    pub fn test_basic_multifolding() {
+    pub fn test_basic_genericfolding() {
         let mut rng = test_rng();
 
         // Create a basic CCS circuit
@@ -749,10 +759,10 @@ pub mod test {
         let (new_instance, w2) = ccs.to_cccs(&mut rng, &pedersen_params, &z_2);
 
         // Prover's transcript
-        let mut transcript_p = IOPTranscript::<Fr>::new(b"multifolding");
+        let mut transcript_p = IOPTranscript::<Fr>::new(b"genericfolding");
         transcript_p.append_message(b"init", b"init").unwrap();
 
-        // Run the prover side of the multifolding
+        // Run the prover side of the genericfolding
         let (proof, folded_accs, folded_witness) = NIMFS::prove(
             &mut transcript_p,
             &vec![running_instance.clone()],
@@ -762,10 +772,10 @@ pub mod test {
         );
 
         // Verifier's transcript
-        let mut transcript_v = IOPTranscript::<Fr>::new(b"multifolding");
+        let mut transcript_v = IOPTranscript::<Fr>::new(b"genericfolding");
         transcript_v.append_message(b"init", b"init").unwrap();
 
-        // Run the verifier side of the multifolding
+        // Run the verifier side of the genericfolding
         let folded_accs_v = NIMFS::verify(
             &mut transcript_v,
             &vec![running_instance.clone()],
@@ -780,9 +790,9 @@ pub mod test {
             .unwrap();
     }
 
-    /// Perform multiple steps of multifolding of an accs instance with a CCCS instance
+    /// Perform multiple steps of genericfolding of an accs instance with a CCCS instance
     #[test]
-    pub fn test_multifolding_two_instances_multiple_steps() {
+    pub fn test_genericfolding_two_instances_multiple_steps() {
         let mut rng = test_rng();
 
         let ccs = get_test_ccs::<G1Projective>();
@@ -793,8 +803,8 @@ pub mod test {
         let z_1 = get_test_z(2);
         let (mut running_instance, mut w1) = ccs.to_accs(&mut rng, &pedersen_params, &z_1);
 
-        let mut transcript_p = IOPTranscript::<Fr>::new(b"multifolding");
-        let mut transcript_v = IOPTranscript::<Fr>::new(b"multifolding");
+        let mut transcript_p = IOPTranscript::<Fr>::new(b"genericfolding");
+        let mut transcript_v = IOPTranscript::<Fr>::new(b"genericfolding");
         transcript_p.append_message(b"init", b"init").unwrap();
         transcript_v.append_message(b"init", b"init").unwrap();
 
@@ -808,7 +818,7 @@ pub mod test {
 
             let (new_instance, w2) = ccs.to_cccs(&mut rng, &pedersen_params, &z_2);
 
-            // run the prover side of the multifolding
+            // run the prover side of the genericfolding
             let (proof, folded_accs, folded_witness) = NIMFS::prove(
                 &mut transcript_p,
                 &vec![running_instance.clone()],
@@ -817,7 +827,7 @@ pub mod test {
                 &vec![w2],
             );
 
-            // run the verifier side of the multifolding
+            // run the verifier side of the genericfolding
             let folded_accs_v = NIMFS::verify(
                 &mut transcript_v,
                 &vec![running_instance.clone()],
@@ -838,9 +848,9 @@ pub mod test {
         }
     }
 
-    /// Test that generates mu>1 and nu>1 instances, and folds them in a single multifolding step.
+    /// Test that generates mu>1 and nu>1 instances, and folds them in a single genericfolding step.
     #[test]
-    pub fn test_multifolding_mu_nu_instances() {
+    pub fn test_genericfolding_mu_nu_instances() {
         let mut rng = test_rng();
 
         // Create a basic CCS circuit
@@ -880,10 +890,10 @@ pub mod test {
         }
 
         // Prover's transcript
-        let mut transcript_p = IOPTranscript::<Fr>::new(b"multifolding");
+        let mut transcript_p = IOPTranscript::<Fr>::new(b"genericfolding");
         transcript_p.append_message(b"init", b"init").unwrap();
 
-        // Run the prover side of the multifolding
+        // Run the prover side of the genericfolding
         let (proof, folded_accs, folded_witness) = NIMFS::prove(
             &mut transcript_p,
             &accs_instances,
@@ -893,10 +903,10 @@ pub mod test {
         );
 
         // Verifier's transcript
-        let mut transcript_v = IOPTranscript::<Fr>::new(b"multifolding");
+        let mut transcript_v = IOPTranscript::<Fr>::new(b"genericfolding");
         transcript_v.append_message(b"init", b"init").unwrap();
 
-        // Run the verifier side of the multifolding
+        // Run the verifier side of the genericfolding
         let folded_accs_v =
             NIMFS::verify(&mut transcript_v, &accs_instances, &cccs_instances, proof);
         assert_eq!(folded_accs, folded_accs_v);
@@ -907,10 +917,10 @@ pub mod test {
             .unwrap();
     }
 
-    /// Test that generates mu>1 and nu>1 instances, and folds them in a single multifolding step
+    /// Test that generates mu>1 and nu>1 instances, and folds them in a single genericfolding step
     /// and repeats the process doing multiple steps.
     #[test]
-    pub fn test_multifolding_mu_nu_instances_multiple_steps() {
+    pub fn test_genericfolding_mu_nu_instances_multiple_steps() {
         let before = Instant::now();
         let mut ctr = 0;
         let mut rng = test_rng();
@@ -921,16 +931,16 @@ pub mod test {
             let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
 
             // Prover's transcript
-            let mut transcript_p = IOPTranscript::<Fr>::new(b"multifolding");
+            let mut transcript_p = IOPTranscript::<Fr>::new(b"genericfolding");
             transcript_p.append_message(b"init", b"init").unwrap();
 
             // Verifier's transcript
-            let mut transcript_v = IOPTranscript::<Fr>::new(b"multifolding");
+            let mut transcript_v = IOPTranscript::<Fr>::new(b"genericfolding");
             transcript_v.append_message(b"init", b"init").unwrap();
 
             let n_steps = 3;
 
-            // number of accs & CCCS instances in each multifolding step
+            // number of accs & CCCS instances in each genericfolding step
             let mu = 10;
             let nu = 15;
 
@@ -964,7 +974,7 @@ pub mod test {
                     w_cccs.push(w);
                 }
 
-                // Run the prover side of the multifolding
+                // Run the prover side of the genericfolding
                 let (proof, folded_accs, folded_witness) = NIMFS::prove(
                     &mut transcript_p,
                     &accs_instances,
@@ -973,7 +983,7 @@ pub mod test {
                     &w_cccs,
                 );
 
-                // Run the verifier side of the multifolding
+                // Run the verifier side of the genericfolding
                 let folded_accs_v =
                     NIMFS::verify(&mut transcript_v, &accs_instances, &cccs_instances, proof);
                 assert_eq!(folded_accs, folded_accs_v);
