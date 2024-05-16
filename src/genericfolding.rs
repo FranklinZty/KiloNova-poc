@@ -182,7 +182,7 @@ impl<C: CurveGroup> Genericfolding<C> {
     pub fn fold(
         accs: &[ACCS<C>],
         cccs: &[CCCS<C>],
-        sigmas: &[Vec<C::ScalarField>],
+        epsilons: &[Vec<C::ScalarField>],
         thetas: &[Vec<C::ScalarField>],
         r_x_prime: Vec<C::ScalarField>,
         r_y_prime: Vec<C::ScalarField>,
@@ -191,7 +191,7 @@ impl<C: CurveGroup> Genericfolding<C> {
         let mut C_folded = C::zero();
         let mut u_folded = C::ScalarField::zero();
         let mut x_folded: Vec<C::ScalarField> = vec![C::ScalarField::zero(); accs[0].x.len()];
-        let mut v_folded: Vec<C::ScalarField> = vec![C::ScalarField::zero(); sigmas[0].len()];
+        let mut v_folded: Vec<C::ScalarField> = vec![C::ScalarField::zero(); epsilons[0].len()];
 
         for i in 0..(accs.len() + cccs.len()) {
             let rho_i = rho.pow([i as u64]);
@@ -204,7 +204,7 @@ impl<C: CurveGroup> Genericfolding<C> {
                 c = accs[i].C.0;
                 u = accs[i].u;
                 x = accs[i].x.clone();
-                v = sigmas[i].clone();
+                v = epsilons[i].clone();
             } else {
                 c = cccs[i - accs.len()].C.0;
                 u = C::ScalarField::one();
@@ -694,7 +694,7 @@ pub mod test {
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
         let (running_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
 
-        let (sigmas, taus) = Genericfolding::<G1Projective>::compute_sigmas_and_taus(
+        let (sigmas, taus) = Genericfolding::<G1Projective>::compute(
             &running_instance.ccs,
             &vec![z1.clone()],
             &vec![z2.clone()],
