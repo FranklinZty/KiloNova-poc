@@ -76,6 +76,10 @@ impl<C: CurveGroup> CCS<C> {
 
         Ok(())
     }
+
+    pub fn update_M(& mut self, M: Vec<Matrix<C::ScalarField>>) -> (){
+        self.M = M;
+    }
 }
 
 #[cfg(test)]

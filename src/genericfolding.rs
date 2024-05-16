@@ -15,6 +15,7 @@ use crate::espresso::sum_check::structs::IOPProof as SumCheckProof;
 use crate::espresso::sum_check::{verifier::interpolate_uni_poly, SumCheck};
 use crate::espresso::virtual_polynomial::{eq_eval, VPAuxInfo, VirtualPolynomial};
 use crate::util::hypercube::BooleanHypercube;
+use crate::util::vec::*;
 
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -22,7 +23,8 @@ use std::time::Instant;
 /// Proof defines a genericfolding proof
 #[derive(Debug)]
 pub struct Proof<C: CurveGroup> {
-    pub sc_proof: SumCheckProof<C::ScalarField>,
+    pub sc_proof_x: SumCheckProof<C::ScalarField>,
+    pub sc_proof_y: SumCheckProof<C::ScalarField>,
     pub sigmas: Vec<Vec<C::ScalarField>>,
     pub taus: Vec<Vec<C::ScalarField>>,
 }
@@ -238,7 +240,6 @@ impl<C: CurveGroup> Genericfolding<C> {
         g
     }
 
-    /// TODO: finish Fold
     pub fn fold(
         accs: &[ACCS<C>],
         cccs: &[CCCS<C>],
@@ -252,6 +253,7 @@ impl<C: CurveGroup> Genericfolding<C> {
         let mut u_folded = C::ScalarField::zero();
         let mut x_folded: Vec<C::ScalarField> = vec![C::ScalarField::zero(); accs[0].x.len()];
         let mut v_folded: Vec<C::ScalarField> = vec![C::ScalarField::zero(); epsilons[0].len()];
+        let mut M_folded: Vec<Matrix<C::ScalarField>> = vec![vec![vec![C::ScalarField::zero(); accs[0].ccs.M[0][0].len()]; accs[0].ccs.M[0].len()]; accs[0].ccs.M.len()];
 
         for i in 0..(accs.len() + cccs.len()) {
             let rho_i = rho.pow([i as u64]);
@@ -260,18 +262,20 @@ impl<C: CurveGroup> Genericfolding<C> {
             let u: C::ScalarField;
             let x: Vec<C::ScalarField>;
             let v: Vec<C::ScalarField>;
+            let M: Vec<Matrix<C::ScalarField>>;
             if i < accs.len() {
                 c = accs[i].C.0;
                 u = accs[i].u;
                 x = accs[i].x.clone();
                 v = epsilons[i].clone();
+                M = accs[i].ccs.M.clone();
             } else {
                 c = cccs[i - accs.len()].C.0;
                 u = C::ScalarField::one();
                 x = cccs[i - accs.len()].x.clone();
                 v = thetas[i - accs.len()].clone();
+                M = cccs[i - accs.len()].ccs.M.clone();
             }
-
             C_folded += c.mul(rho_i);
             u_folded += rho_i * u;
             x_folded = x_folded
@@ -293,9 +297,14 @@ impl<C: CurveGroup> Genericfolding<C> {
                 )
                 .map(|(a_i, b_i)| *a_i + b_i)
                 .collect();
+
+            for (j, M_j) in M.iter().enumerate() {
+                let M_j_rho = mat_scalar_mul(&M_j, &rho_i);
+                M_folded[j] = mat_add(&M_folded[j], &M_j_rho);
+            }
         }
 
-        ACCS::<C> {
+        let mut folded_accs = ACCS::<C> {
             C: Commitment(C_folded),
             ccs: accs[0].ccs.clone(),
             u: u_folded,
@@ -303,7 +312,9 @@ impl<C: CurveGroup> Genericfolding<C> {
             r_x: r_x_prime,
             r_y: r_y_prime,
             v: v_folded,
-        }
+        }; 
+        folded_accs.ccs.update_M(M_folded);
+        folded_accs
     }
 
     pub fn fold_witness(
@@ -364,7 +375,13 @@ impl<C: CurveGroup> Genericfolding<C> {
         assert!(!running_instances.is_empty());
         assert!(!new_instances.is_empty());
 
-        // construct the accs z vector from the relaxation factor, public IO and witness
+        // Step 1: Get some challenges gamma, alpha
+        let gamma: C::ScalarField = transcript.get_and_append_challenge(b"gamma").unwrap();
+        let alpha: Vec<C::ScalarField> = transcript
+            .get_and_append_challenge_vectors(b"alpha", running_instances[0].ccs.s)
+            .unwrap();
+
+        // Step 3: construct the accs z vector from the relaxation factor, public IO and witness
         // XXX this deserves its own function in accs
         let mut z_accs = Vec::new();
         for (i, running_instance) in running_instances.iter().enumerate() {
@@ -388,14 +405,8 @@ impl<C: CurveGroup> Genericfolding<C> {
             z_cccs.push(z_2);
         }
 
-        // Step 1: Get some challenges
-        let gamma: C::ScalarField = transcript.get_and_append_challenge(b"gamma").unwrap();
-        let alpha: Vec<C::ScalarField> = transcript
-            .get_and_append_challenge_vectors(b"alpha", running_instances[0].ccs.s)
-            .unwrap();
-
-        // Compute g(x)
-        let gx = Self::compute_fx(
+        // Step 4: Compute f(x)
+        let fx = Self::compute_fx(
             running_instances,
             new_instances,
             &z_cccs,
@@ -403,9 +414,9 @@ impl<C: CurveGroup> Genericfolding<C> {
             &alpha,
         );
 
-        // Step 3: Run the sumcheck prover
+        // Step 4: Run the first round sumcheck prover
         let sumcheck_proof_x =
-            <PolyIOP<C::ScalarField> as SumCheck<C::ScalarField>>::prove(&gx, transcript).unwrap(); // XXX unwrap
+            <PolyIOP<C::ScalarField> as SumCheck<C::ScalarField>>::prove(&fx, transcript).unwrap(); // XXX unwrap
 
         // Note: The following two "sanity checks" are done for this prototype, in a final version
         // they should be removed.
@@ -435,11 +446,11 @@ impl<C: CurveGroup> Genericfolding<C> {
         // assert_eq!(extracted_sum, sum_v_j_gamma);
         // //////////////////////////////////////////////////////////////////////
 
-        // Step 2: dig into the sumcheck and extract r_x_prime
+        // Step 2: dig into the sumcheck and extract r_x_prime (the order is different from the paper)
         let r_x_prime = sumcheck_proof_x.point.clone();
 
 
-        // Step 4: compute sigmas and thetas
+        // Step 5: compute sigmas and thetas
         let (sigmas, taus) = Self::compute_sigmas_and_taus(
             &running_instances[0].ccs,
             &z_accs,
@@ -448,9 +459,10 @@ impl<C: CurveGroup> Genericfolding<C> {
             &r_x_prime,
         );
 
-        // Compute g(y)
+        // Step 7: Get some challenges delta
         let delta: C::ScalarField = transcript.get_and_append_challenge(b"delta").unwrap();
 
+        // Step 9: Compute g(y)
         let gy = Self::compute_gy(
             running_instances,
             new_instances,
@@ -460,33 +472,43 @@ impl<C: CurveGroup> Genericfolding<C> {
             &r_x_prime,
         );
 
-        // Step 3: Run the sumcheck prover
+        // Step 9: Run the second round sumcheck prover
         let sumcheck_proof_y =
         <PolyIOP<C::ScalarField> as SumCheck<C::ScalarField>>::prove(&gy, transcript).unwrap(); // XXX unwrap
 
-        // Step 2: dig into the sumcheck and extract r_x_prime
+        // Step 8: dig into the sumcheck and extract r_y_prime
         let r_y_prime = sumcheck_proof_y.point.clone();
         
-        // Step 6: Get the folding challenge
+        // Step 10: compute epsilons and thetas
+        let (epsilons, thetas) = Self::compute_epsilons_and_thetas(
+            &running_instances[0].ccs,
+            &z_accs,
+            &z_cccs,
+            &r_x_prime,
+            &r_y_prime,
+        );
+
+        // Step 11: Get the folding challenge
         let rho: C::ScalarField = transcript.get_and_append_challenge(b"rho").unwrap();
 
-        // Step 7: Create the folded instance
+        // Step 13: Create the folded instance
         let folded_accs = Self::fold(
             running_instances,
             new_instances,
-            &sigmas,
-            &taus,
+            &epsilons,
+            &thetas,
             r_x_prime,
             r_y_prime,
             rho,
         );
 
-        // Step 8: Fold the witnesses
+        // Step 14: Fold the witnesses
         let folded_witness = Self::fold_witness(w_accs, w_cccs, rho);
 
         (
             Proof::<C> {
-                sc_proof: sumcheck_proof_x,
+                sc_proof_x: sumcheck_proof_x,
+                sc_proof_y: sumcheck_proof_y,
                 sigmas,
                 taus,
             },
@@ -513,46 +535,47 @@ impl<C: CurveGroup> Genericfolding<C> {
 
         // Step 1: Get some challenges
         let gamma: C::ScalarField = transcript.get_and_append_challenge(b"gamma").unwrap();
-        let beta: Vec<C::ScalarField> = transcript
-            .get_and_append_challenge_vectors(b"beta", running_instances[0].ccs.s)
+        let alpha: Vec<C::ScalarField> = transcript
+            .get_and_append_challenge_vectors(b"alpha", running_instances[0].ccs.s)
             .unwrap();
 
-        let vp_aux_info = VPAuxInfo::<C::ScalarField> {
+        let vp_aux_info_x = VPAuxInfo::<C::ScalarField> {
             max_degree: running_instances[0].ccs.d + 1,
             num_variables: running_instances[0].ccs.s,
             phantom: PhantomData::<C::ScalarField>,
         };
 
-        // Step 3: Start verifying the sumcheck
+        // Step 4: Start verifying the sumcheck
         // First, compute the expected sumcheck sum: \sum gamma^j v_j
-        let mut sum_v_j_gamma = C::ScalarField::zero();
+        let mut sum_x = C::ScalarField::zero();
         for (i, running_instance) in running_instances.iter().enumerate() {
-            for j in 0..running_instance.v.len() {
+            for j in 0..(running_instance.v.len()-1) {
                 let gamma_j = gamma.pow([(i * running_instances[0].ccs.t + j) as u64]);
-                sum_v_j_gamma += running_instance.v[j] * gamma_j;
+                sum_x += running_instance.v[j] * gamma_j;
             }
         }
 
         // Verify the interactive part of the sumcheck
         let sumcheck_subclaim = <PolyIOP<C::ScalarField> as SumCheck<C::ScalarField>>::verify(
-            sum_v_j_gamma,
-            &proof.sc_proof,
-            &vp_aux_info,
+            sum_x,
+            &proof.sc_proof_x,
+            &vp_aux_info_x,
             transcript,
         )
         .unwrap();
 
         // Step 2: Dig into the sumcheck claim and extract the randomness used
         let r_x_prime = sumcheck_subclaim.point.clone();
-        let r_y_prime = sumcheck_subclaim.point.clone();
 
         // Step 5: Finish verifying sumcheck (verify the claim c)
-        let c = Self::compute_cx_from_sigmas_and_taus(
+        let vec_sigmas = &proof.sigmas;
+        let vec_taus = &proof.taus;
+        let cx = Self::compute_cx_from_sigmas_and_taus(
             &new_instances[0].ccs,
-            &proof.sigmas,
-            &proof.taus,
+            vec_sigmas,
+            vec_taus,
             gamma,
-            &beta,
+            &alpha,
             &running_instances
                 .iter()
                 .map(|accs| accs.r_x.clone())
@@ -560,25 +583,70 @@ impl<C: CurveGroup> Genericfolding<C> {
             &r_x_prime,
         );
         // check that the g(r_x') from the sumcheck proof is equal to the computed c from sigmas&thetas
-        assert_eq!(c, sumcheck_subclaim.expected_evaluation);
+        assert_eq!(cx, sumcheck_subclaim.expected_evaluation);
 
-        // Sanity check: we can also compute g(r_x') from the proof last evaluation value, and
-        // should be equal to the previously obtained values.
-        let g_on_rxprime_from_sumcheck_last_eval = interpolate_uni_poly::<C::ScalarField>(
-            &proof.sc_proof.proofs.last().unwrap().evaluations,
-            *r_x_prime.last().unwrap(),
+        // Step 7: Get some challenges
+        let delta: C::ScalarField = transcript.get_and_append_challenge(b"delta").unwrap();
+        
+        let vp_aux_info_y = VPAuxInfo::<C::ScalarField> {
+            max_degree: running_instances[0].ccs.d + 1,
+            num_variables: running_instances[0].ccs.s_prime,
+            phantom: PhantomData::<C::ScalarField>,
+        };
+
+        // Step 9: Start verifying the sumcheck
+        // TODO: First, compute the expected sumcheck sum: \sum gamma^j v_j
+        let mut sum_y = C::ScalarField::zero();
+
+
+        // compute \sum_j \delta^j \sigma_j + \delta^{t+1} v_{t}
+        println!("mu: {:?}", vec_sigmas.len());
+        for (i, sigmas) in vec_sigmas.iter().enumerate() {
+            for (j, sigma_j) in sigmas.iter().enumerate() {
+                let delta_j = delta.pow([(i * (running_instances[0].ccs.t + 1) + j) as u64]);
+                sum_y += delta_j * sigma_j;
+            }
+            sum_y += delta.pow([((i + 1) * (running_instances[0].ccs.t + 1) -1) as u64]) * running_instances[i].v[running_instances[0].ccs.t];
+        }
+
+        // compute \delta^{t+1} \sum_j \delta^j \tau_j
+        let mu = vec_sigmas.len();
+        for (k, taus) in vec_taus.iter().enumerate() {
+            for (j, tau_j) in taus.iter().enumerate() {
+                let delta_k = delta.pow([(mu * (new_instances[0].ccs.t + 1) + k * new_instances[0].ccs.t + j) as u64]);
+                sum_y += delta_k * tau_j;
+            }
+        }
+
+        // Verify the interactive part of the sumcheck
+        let sumcheck_subclaim = <PolyIOP<C::ScalarField> as SumCheck<C::ScalarField>>::verify(
+            sum_y,
+            &proof.sc_proof_y,
+            &vp_aux_info_y,
+            transcript,
         )
         .unwrap();
-        assert_eq!(g_on_rxprime_from_sumcheck_last_eval, c);
-        assert_eq!(
-            g_on_rxprime_from_sumcheck_last_eval,
-            sumcheck_subclaim.expected_evaluation
-        );
 
-        // Step 6: Get the folding challenge
+        // Step 8: Dig into the sumcheck and extract r_y'
+        let r_y_prime = sumcheck_subclaim.point.clone();
+        
+        // // Sanity check: we can also compute g(r_x') from the proof last evaluation value, and
+        // // should be equal to the previously obtained values.
+        // let g_on_rxprime_from_sumcheck_last_eval = interpolate_uni_poly::<C::ScalarField>(
+        //     &proof.sc_proof.proofs.last().unwrap().evaluations,
+        //     *r_x_prime.last().unwrap(),
+        // )
+        // .unwrap();
+        // assert_eq!(g_on_rxprime_from_sumcheck_last_eval, c);
+        // assert_eq!(
+        //     g_on_rxprime_from_sumcheck_last_eval,
+        //     sumcheck_subclaim.expected_evaluation
+        // );
+
+        // Step 11: Get the folding challenge
         let rho: C::ScalarField = transcript.get_and_append_challenge(b"rho").unwrap();
 
-        // Step 7: Compute the folded instance
+        // Step 13: Compute the folded instance
         Self::fold(
             running_instances,
             new_instances,
@@ -816,7 +884,7 @@ pub mod test {
         let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
         let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
 
-        // compute the sum of the first-round sumcheck as 
+        // compute the sum of the second-round sumcheck as 
         // sum_y = \sum_j \delta^j \sigma_j + \delta^{t+1} v_{t} + \delta^{t+1} \sum_j \delta^j \tau_j
         let mut sum_y = Fr::zero();
 
@@ -848,7 +916,7 @@ pub mod test {
         }
 
         // Compute g(y)
-        let g = NIMFS::compute_gy(
+        let gy = NIMFS::compute_gy(
             &vec![accs_instance.clone()],
             &vec![cccs_instance.clone()],
             &vec![z1.clone()],
@@ -860,7 +928,7 @@ pub mod test {
         // sum up g(y) over y \in {0,1}^s'
         let mut g_on_bhc = Fr::zero();
         for y in BooleanHypercube::new(ccs.s_prime).into_iter() {
-            g_on_bhc += g.evaluate(&y).unwrap();
+            g_on_bhc += gy.evaluate(&y).unwrap();
         }
 
         // sum up the first part of g(y): 
@@ -911,12 +979,12 @@ pub mod test {
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
         let (running_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
 
-        let (sigmas, taus) = Genericfolding::<G1Projective>::compute(
+        let (epsilons, thetas) = Genericfolding::<G1Projective>::compute_epsilons_and_thetas(
             &running_instance.ccs,
             &vec![z1.clone()],
             &vec![z2.clone()],
-            &running_instance.r_y,
             &r_x_prime,
+            &r_y_prime,
         );
 
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
@@ -930,20 +998,58 @@ pub mod test {
         let mut rng = test_rng();
         let rho = Fr::rand(&mut rng);
 
-        let folded = Genericfolding::<G1Projective>::fold(
+        // // check whether the accs derived from accs is satisfied
+        // let accs_from_accs = ACCS::<G1Projective> {
+        //     C: accs.C.clone(),
+        //     ccs: accs.ccs.clone(),
+        //     u: accs.u.clone(),
+        //     x: accs.x.clone(),
+        //     r_x: r_x_prime.clone(),
+        //     r_y: r_y_prime.clone(),
+        //     v: epsilons[0].clone(),
+        // };
+        // let z: Vec<Fr> = [vec![accs_from_accs.u], accs_from_accs.x.clone(), w1.w.to_vec()].concat();
+        // let computed_v_accs = accs_from_accs.ccs.compute_v_j_accs(&z, &r_x_prime, &r_y_prime);
+        // println!("check ACCS reltaions (from CCCS).");
+
+        // // check whether the accs derived from cccs is satisfied
+        // let accs_from_cccs = ACCS::<G1Projective> {
+        //     C: cccs.C.clone(),
+        //     ccs: cccs.ccs.clone(),
+        //     u: Fr::one(),
+        //     x: cccs.x.clone(),
+        //     r_x: r_x_prime.clone(),
+        //     r_y: r_y_prime.clone(),
+        //     v: thetas[0].clone(),
+        // };
+        // let z: Vec<Fr> = [vec![accs_from_cccs.u], accs_from_cccs.x.clone(), w2.w.to_vec()].concat();
+        // let computed_v_cccs = accs_from_cccs.ccs.compute_v_j_accs(&z, &r_x_prime, &r_y_prime);
+        // println!("check ACCS reltaions (from ACCS).");
+
+        // let v_folded: Vec<Fr> = computed_v_accs
+        // .iter()
+        // .zip(
+        //     computed_v_cccs.iter()
+        //         .map(|x_i| *x_i * rho)
+        //         .collect::<Vec<Fr>>(),
+        // )
+        // .map(|(a_i, b_i)| *a_i + b_i)
+        // .collect();
+
+        let accs_folded = Genericfolding::<G1Projective>::fold(
             &vec![accs],
             &vec![cccs],
-            &sigmas,
-            &taus,
-            r_x_prime,
-            r_y_prime,
+            &epsilons,
+            &thetas,
+            r_x_prime.clone(),
+            r_y_prime.clone(),
             rho,
         );
 
         let w_folded = Genericfolding::<G1Projective>::fold_witness(&vec![w1], &vec![w2], rho);
-
+        
         // check accs relation
-        folded.check_relation(&pedersen_params, &w_folded).unwrap();
+        accs_folded.check_relation(&pedersen_params, &w_folded).unwrap();
     }
 
     /// Perform genericfolding of an accs instance with a CCCS instance (as described in the paper)

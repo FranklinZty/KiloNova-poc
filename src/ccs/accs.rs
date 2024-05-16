@@ -40,7 +40,7 @@ pub struct ACCS<C: CurveGroup> {
 impl<C: CurveGroup> CCS<C> {
     /// Compute v_j values of the linearized committed CCS form
     /// Given `r`, compute:  \sum_{y \in {0,1}^s'} M_j(r, y) * z(y)
-    fn compute_v_j_accs(&self, z: &[C::ScalarField], r_x: &[C::ScalarField], r_y: &[C::ScalarField]) -> Vec<C::ScalarField> {
+    pub fn compute_v_j_accs(&self, z: &[C::ScalarField], r_x: &[C::ScalarField], r_y: &[C::ScalarField]) -> Vec<C::ScalarField> {
         // compute_all_sum_Mz_evals(&self.M, &z.to_vec(), r_x, self.s_prime)
         compute_all_sum_M_and_z_evals(&self.M, &z.to_vec(), r_x, r_y, self.s_prime)
     }
@@ -130,7 +130,7 @@ impl<C: CurveGroup> ACCS<C> {
 
         // check ACCS relation
         let z: Vec<C::ScalarField> = [vec![self.u], self.x.clone(), w.w.to_vec()].concat();
-        let computed_v = compute_all_sum_M_and_z_evals(&self.ccs.M, &z, &self.r_x, &self.r_y, self.ccs.s_prime);
+        let computed_v = self.ccs.compute_v_j_accs( &z, &self.r_x, &self.r_y);
         assert_eq!(computed_v, self.v);
         Ok(())
     }

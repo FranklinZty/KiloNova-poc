@@ -17,6 +17,35 @@ pub fn hadamard<F: PrimeField>(a: &Vec<F>, b: &Vec<F>) -> Vec<F> {
     cfg_iter!(a).zip(b).map(|(a, b)| *a * b).collect()
 }
 
+// Add two matricess
+pub fn mat_add<F: PrimeField>(mat1: &Matrix<F>, mat2: &Matrix<F>) -> Matrix<F> {
+    // matrices are lists of rows
+    // rows are (value, idx) pairs
+    assert_eq!(mat1.len(), mat2.len());
+    assert_eq!(mat1[0].len(), mat2[0].len());
+    let mut result = vec![vec![F::zero(); mat1[0].len()]; mat1.len()];
+    for (r, mat_row) in mat1.iter().enumerate() {
+        for (c, mat_val) in mat_row.iter().enumerate() {
+            result[r][c] = *mat_val + mat2[r][c];
+        }
+    }
+    result
+}
+
+
+// Multiply matrix by scalar
+pub fn mat_scalar_mul<F: PrimeField>(mat: &Matrix<F>, scalar: &F) -> Matrix<F> {
+    // matrices are lists of rows
+    // rows are (value, idx) pairs
+    let mut result = vec![vec![F::zero(); mat[0].len()]; mat.len()];
+    for (r, mat_row) in mat.iter().enumerate() {
+        for (c, mat_val) in mat_row.iter().enumerate() {
+            result[r][c] = *mat_val * scalar;
+        }
+    }
+    result
+}
+
 // Multiply matrix by vector
 pub fn mat_vec_mul<F: PrimeField>(mat: &Matrix<F>, vec: &[F]) -> Vec<F> {
     // matrices are lists of rows
@@ -127,6 +156,51 @@ mod test {
         assert_eq!(
             vec_scalar_mul(&result, &Fr::from(2u64)),
             vec![Fr::from(806u64), Fr::from(2762u64), Fr::from(2656u64)]
+        );
+    }
+
+    #[test]
+    fn test_mat_scalar_mul() -> () {
+        let A = vec![
+            vec![Fr::from(2u64), Fr::from(3u64), Fr::from(4u64)],
+            vec![Fr::from(4u64), Fr::from(11u64), Fr::from(14u64)],
+            vec![Fr::from(2u64), Fr::from(8u64), Fr::from(17u64)],
+        ];
+        let scalar = Fr::from(3u64);
+
+        let result = mat_scalar_mul(&A, &scalar);
+        assert_eq!(
+            result,
+            vec![
+            vec![Fr::from(6u64), Fr::from(9u64), Fr::from(12u64)],
+            vec![Fr::from(12u64), Fr::from(33u64), Fr::from(42u64)],
+            vec![Fr::from(6u64), Fr::from(24u64), Fr::from(51u64)],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_mat_add() -> () {
+        let A1 = vec![
+            vec![Fr::from(2u64), Fr::from(3u64), Fr::from(4u64)],
+            vec![Fr::from(4u64), Fr::from(11u64), Fr::from(14u64)],
+            vec![Fr::from(2u64), Fr::from(8u64), Fr::from(17u64)],
+        ];
+
+        let A2 = vec![
+            vec![Fr::from(4u64), Fr::from(3u64), Fr::from(2u64)],
+            vec![Fr::from(14u64), Fr::from(11u64), Fr::from(4u64)],
+            vec![Fr::from(17u64), Fr::from(8u64), Fr::from(2u64)],
+        ];
+
+        let result = mat_add(&A1, &A2);
+        assert_eq!(
+            result,
+            vec![
+            vec![Fr::from(6u64), Fr::from(6u64), Fr::from(6u64)],
+            vec![Fr::from(18u64), Fr::from(22u64), Fr::from(18u64)],
+            vec![Fr::from(19u64), Fr::from(16u64), Fr::from(19u64)],
+            ]
         );
     }
 }
