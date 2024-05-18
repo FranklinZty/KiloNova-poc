@@ -23,5 +23,5 @@ Kilonova Space Explosion Could (from agnirva.medium.com)
 ## Recursive Circuit for CCS
 This step requires a crate for building CCS arithmetic circuits from rust (just like the bellpepper for building R1CS circuits in Nova). 
 However, there is no known crate that satisfies this requirement.
-## Construct KiloNova
+## KiloNova PCD Constructions
 Implement the zero-knowledge PCD scheme, and integrate it with an off-the-shell SNARK system.
