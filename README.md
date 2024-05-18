@@ -16,12 +16,12 @@ Kilonova Space Explosion Could (from agnirva.medium.com)
 <p>
 
 # Development Progress
-## Generic Folding Schemes
+## Generic Folding Schemes (In Progress)
 1. Implement multi-folding schemes for CCS instances (Finished). 
 2. Generalize the folding scheme to handle instances with non-uniform circuits (In Progress).
 3. Achieve zero knowledge (In Progress).
-## Recursive Circuit for CCS
+## Recursive Circuit for CCS (TODO)
 This step requires a crate for building CCS arithmetic circuits from rust (just like the bellpepper for building R1CS circuits in Nova). 
 However, there is no known crate that satisfies this requirement.
-## KiloNova PCD Constructions
+## KiloNova PCD Constructions (TODO)
 Implement the zero-knowledge PCD scheme, and integrate it with an off-the-shell SNARK system.
