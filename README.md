@@ -10,8 +10,10 @@ Theoretically, KiloNova solves a specific class of problems called Proof-Carryin
 Inspired by HyperNova, KiloNova linearizes the high-degree CCS (Customizable Constraint Systems) relation by running an “early stopping” version of SuperSpartan and folds the derived instances without introducing extra communications.
 The theoretical analysis shows that KiloNova achieves the same asymptotic complexity as HyperNova while providing the more appealing attributes mentioned above.
 
-![image](https://github.com/FranklinZty/KiloNova-poc/assets/44116484/db9a7d96-8ef3-4622-b239-f54ef3d2b906)
+<p align="center">
+<img src="https://github.com/FranklinZty/KiloNova-poc/assets/44116484/db9a7d96-8ef3-4622-b239-f54ef3d2b906" width="250">  <br>
 Kilonova Space Explosion Could (from agnirva.medium.com)
+<p>
 
 # Development Progress
 ## Generic Folding Schemes
