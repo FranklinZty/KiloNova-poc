@@ -42,14 +42,14 @@ impl<C: CurveGroup> Genericfolding<C> {
         ccs: &CCS<C>,
         z_accs: &[Vec<C::ScalarField>],
         z_cccs: &[Vec<C::ScalarField>],
-        r_y: &Vec<C::ScalarField>,
+        r_y: &Vec<Vec<C::ScalarField>>,
         r_x_prime: &[C::ScalarField],
     ) -> (Vec<Vec<C::ScalarField>>, Vec<Vec<C::ScalarField>>) {
         // sigma_j = \sum_y eq(r_y, y) M(r_x', y) for accs
         let mut sigmas: Vec<Vec<C::ScalarField>> = Vec::new();
-        for _ in z_accs {
+        for i in 0..z_accs.len() {
             // sigmas
-            let sigma_i = compute_all_sum_eqM_evals(&ccs.M, r_y, r_x_prime, ccs.s_prime);
+            let sigma_i = compute_all_sum_eqM_evals(&ccs.M, &r_y[i], r_x_prime, ccs.s_prime);
             sigmas.push(sigma_i);
         }
         // tau_j = \sum_y M_j(r_x', y) z(y) for cccs
@@ -78,7 +78,6 @@ impl<C: CurveGroup> Genericfolding<C> {
         for r_x in vec_r_x {
             e_accs.push(eq_eval(r_x, r_x_prime).unwrap());
         }
-        println!("mu: {:?}", vec_sigmas.len());
         for (i, sigmas) in vec_sigmas.iter().enumerate() {
             // (sum gamma^j * e_i * sigma_j)
             for (j, sigma_j) in sigmas.iter().enumerate() {
@@ -121,7 +120,7 @@ impl<C: CurveGroup> Genericfolding<C> {
             let mut Ls = running_instance.compute_Ls();
             vec_Ls.append(&mut Ls);
         }
-        // compute Q(x) for all cccs instances (amount: v)
+        // compute Q(x) for all cccs instances (amount: nu)
         let mut vec_Q: Vec<VirtualPolynomial<C::ScalarField>> = Vec::new();
         for (i, cccs_instance) in cccs_instances.iter().enumerate() {
             let Q = cccs_instance.compute_Q(&z_cccs[i], alpha);
@@ -184,7 +183,6 @@ impl<C: CurveGroup> Genericfolding<C> {
         for r_y in vec_r_y {
             e_accs.push(eq_eval(r_y, r_y_prime).unwrap());
         }
-        println!("mu: {:?}", vec_epsilons.len());
         for (i, epsilons) in vec_epsilons.iter().enumerate() {
             // e_i * \sum_j delta^j * epsilon_j, j = 0,...,t
             for (j, epsilon_j) in epsilons.iter().enumerate() {
@@ -197,7 +195,6 @@ impl<C: CurveGroup> Genericfolding<C> {
         for (k, thetas) in vec_thetas.iter().enumerate() {
             // delta^{t+1} theta_t * \sum_j delta^j * theta_j, j = 0,...,t-1
             for (j, theta_j) in thetas[..ccs.t].iter().enumerate() {
-                println!("j: {:?}", j);
                 let delta_j = delta.pow([(mu * (ccs.t + 1) + k * ccs.t + j) as u64]);
                 cy += delta_j * theta_j * thetas[ccs.t];
             }
@@ -453,11 +450,12 @@ impl<C: CurveGroup> Genericfolding<C> {
 
 
         // Step 5: compute sigmas and thetas
+        let vec_r_y: Vec<Vec<C::ScalarField>> = running_instances.iter().map(|accs| accs.r_y.clone()).collect();
         let (sigmas, taus) = Self::compute_sigmas_and_taus(
             &running_instances[0].ccs,
             &z_accs,
             &z_cccs,
-            &running_instances[0].r_y,
+            &vec_r_y,
             &r_x_prime,
         );
 
@@ -695,60 +693,81 @@ pub mod test {
 
     #[test]
     fn test_compute_sigmas_and_taus() -> () {
-        let before = Instant::now();
-        let mut ctr = 0;
-        while ctr < rnd {
-            let ccs = get_test_ccs();
-            let z1 = get_test_z(3);
-            let z2 = get_test_z(4);
-            ccs.check_relation(&z1).unwrap();
-            ccs.check_relation(&z2).unwrap();
+        let mut rng = test_rng();
 
-            // run steps 1 and 2
-            let mut rng = test_rng();
-            let gamma: Fr = Fr::rand(&mut rng);
-            let alpha: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
-            let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
+        // Create a basic CCS circuit
+        let ccs = get_test_ccs::<G1Projective>();
+        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
 
-            // Initialize a genericfolding object
-            let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
-            let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
-            let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
+        let mu = 10;
+        let nu = 15;
 
-
-            // compute sigmas and taus
-            let (sigmas, taus) = NIMFS::compute_sigmas_and_taus(
-                &accs_instance.ccs,
-                &vec![z1.clone()],
-                &vec![z2.clone()],
-                &accs_instance.r_y,
-                &r_x_prime,
-            );
-
-            let f = NIMFS::compute_fx(
-                &vec![accs_instance.clone()],
-                &vec![cccs_instance.clone()],
-                &vec![z2.clone()],
-                gamma,
-                &alpha,
-            );
-
-            // we expect f(r_x_prime) = \sum_j gamma^j L_j(r_x_prime) + gamma^t Q(r_x_prime)
-            // to be equal to cx from compute_c_from_sigmas_and_taus
-            let expected_cx = f.evaluate(&r_x_prime).unwrap();
-            let cx = NIMFS::compute_cx_from_sigmas_and_taus(
-                &ccs,
-                &sigmas,
-                &taus,
-                gamma,
-                &alpha,
-                &vec![accs_instance.r_x],
-                &r_x_prime,
-            );
-            assert_eq!(cx, expected_cx);
-            ctr += 1;
+        // Generate a mu accs & nu CCCS satisfying witness
+        let mut z_accs = Vec::new();
+        for i in 0..mu {
+            let z = get_test_z(i + 3);
+            z_accs.push(z);
         }
-        println!("Elapsed time: {:.2?}", before.elapsed()/rnd);
+        let mut z_cccs = Vec::new();
+        for i in 0..nu {
+            let z = get_test_z(nu + i + 3);
+            z_cccs.push(z);
+        }
+
+        // Create the ACCS instances out of z_accs
+        let mut accs_instances = Vec::new();
+        let mut w_accs = Vec::new();
+        for i in 0..mu {
+            let (running_instance, w) = ccs.to_accs(&mut rng, &pedersen_params, &z_accs[i]);
+            accs_instances.push(running_instance);
+            w_accs.push(w);
+        }
+        // Create the CCCS instance out of z_cccs
+        let mut cccs_instances = Vec::new();
+        let mut w_cccs = Vec::new();
+        for i in 0..nu {
+            let (new_instance, w) = ccs.to_cccs(&mut rng, &pedersen_params, &z_cccs[i]);
+            cccs_instances.push(new_instance);
+            w_cccs.push(w);
+        }
+
+        // run steps 1 and 2
+        let gamma: Fr = Fr::rand(&mut rng);
+        let alpha: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
+        let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
+
+        // compute sigmas and taus
+        let vec_r_y: Vec<Vec<Fr>> = accs_instances.iter().map(|accs| accs.r_y.clone()).collect();
+        let (sigmas, taus) = NIMFS::compute_sigmas_and_taus(
+            &accs_instances[0].ccs,
+            &z_accs.clone(),
+            &z_cccs.clone(),
+            &vec_r_y,
+            &r_x_prime,
+        );
+
+        let f = NIMFS::compute_fx(
+            &accs_instances.clone(),
+            &cccs_instances.clone(),
+            &z_cccs.clone(),
+            gamma,
+            &alpha,
+        );
+
+        // we expect f(r_x_prime) = \sum_j gamma^j L_j(r_x_prime) + gamma^t Q(r_x_prime)
+        // to be equal to cx from compute_c_from_sigmas_and_taus
+        let expected_cx = f.evaluate(&r_x_prime).unwrap();
+        let vec_r_x: Vec<Vec<Fr>> = accs_instances.iter().map(|accs| accs.r_x.clone()).collect();
+        let cx = NIMFS::compute_cx_from_sigmas_and_taus(
+            &ccs,
+            &sigmas,
+            &taus,
+            gamma,
+            &alpha,
+            &vec_r_x,
+            &r_x_prime,
+        );
+        assert_eq!(cx, expected_cx);
     }
 
     #[test]
@@ -756,8 +775,6 @@ pub mod test {
         let ccs = get_test_ccs();
         let z1 = get_test_z(3);
         let z2 = get_test_z(4);
-        println!("z1: {:?}", z1);
-        println!("z2: {:?}", z2);
 
         ccs.check_relation(&z1).unwrap();
         ccs.check_relation(&z2).unwrap();
@@ -778,8 +795,8 @@ pub mod test {
             &ccs,
             &vec![z1.clone()],
             &vec![z2.clone()],
-            &accs_instance.r_y,
-            &accs_instance.r_x,
+            &vec![accs_instance.r_y.clone()],
+            &accs_instance.r_x.clone(),
         );
 
         // compute the sum of the first-round sumcheck as 
@@ -829,59 +846,53 @@ pub mod test {
 
     #[test]
     fn test_compute_epsilons_and_thetas() -> () {
-        let before = Instant::now();
-        let mut ctr = 0;
-        while ctr < rnd {
-            let ccs = get_test_ccs();
-            let z1 = get_test_z(3);
-            let z2 = get_test_z(4);
-            ccs.check_relation(&z1).unwrap();
-            ccs.check_relation(&z2).unwrap();
+        let ccs = get_test_ccs();
+        let z1 = get_test_z(3);
+        let z2 = get_test_z(4);
+        ccs.check_relation(&z1).unwrap();
+        ccs.check_relation(&z2).unwrap();
 
-            // run steps 1 and 2
-            let mut rng = test_rng();
-            let delta: Fr = Fr::rand(&mut rng);
-            let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
-            let r_y_prime: Vec<Fr> = (0..ccs.s_prime).map(|_| Fr::rand(&mut rng)).collect();
-            
-            // Initialize a genericfolding object
-            let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
-            let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
-            let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
+        // run steps 1 and 2
+        let mut rng = test_rng();
+        let delta: Fr = Fr::rand(&mut rng);
+        let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
+        let r_y_prime: Vec<Fr> = (0..ccs.s_prime).map(|_| Fr::rand(&mut rng)).collect();
+        
+        // Initialize a genericfolding object
+        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
+        let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
+        let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
 
 
-            let (epsilons, thetas) = NIMFS::compute_epsilons_and_thetas(
-                &accs_instance.ccs,
-                &vec![z1.clone()],
-                &vec![z2.clone()],
-                &r_x_prime,
-                &r_y_prime,
-            );
+        let (epsilons, thetas) = NIMFS::compute_epsilons_and_thetas(
+            &accs_instance.ccs,
+            &vec![z1.clone()],
+            &vec![z2.clone()],
+            &r_x_prime,
+            &r_y_prime,
+        );
 
-            let g = NIMFS::compute_gy(
-                &vec![accs_instance.clone()],
-                &vec![cccs_instance.clone()],
-                &vec![z1.clone()],
-                &vec![z2.clone()],
-                delta,
-                &r_x_prime,
-            );
+        let g = NIMFS::compute_gy(
+            &vec![accs_instance.clone()],
+            &vec![cccs_instance.clone()],
+            &vec![z1.clone()],
+            &vec![z2.clone()],
+            delta,
+            &r_x_prime,
+        );
 
-            // we expect g(r_y_prime) = \sum_j delta^j R_j(r_y_prime) + delta^{t+1} S(r_y_prime) + delta^{t+1} \sum_j delta^j T_j(r_y_prime)
-            // to be equal to: cy from compute_cy_from_epsilons_and_thetas
-            let expected_cy = g.evaluate(&r_y_prime).unwrap();
-            let cy = NIMFS::compute_cy_from_epsilons_and_thetas(
-                &ccs,
-                &epsilons,
-                &thetas,
-                delta,
-                &vec![accs_instance.r_y],
-                &r_y_prime,
-            );
-            assert_eq!(cy, expected_cy);
-            ctr += 1;
-        }
-        println!("Elapsed time: {:.2?}", before.elapsed()/rnd);
+        // we expect g(r_y_prime) = \sum_j delta^j R_j(r_y_prime) + delta^{t+1} S(r_y_prime) + delta^{t+1} \sum_j delta^j T_j(r_y_prime)
+        // to be equal to: cy from compute_cy_from_epsilons_and_thetas
+        let expected_cy = g.evaluate(&r_y_prime).unwrap();
+        let cy = NIMFS::compute_cy_from_epsilons_and_thetas(
+            &ccs,
+            &epsilons,
+            &thetas,
+            delta,
+            &vec![accs_instance.r_y],
+            &r_y_prime,
+        );
+        assert_eq!(cy, expected_cy);
     }
 
     #[test]
@@ -910,7 +921,7 @@ pub mod test {
             &accs_instance.ccs,
             &vec![z1.clone()],
             &vec![z2.clone()],
-            &accs_instance.r_y,
+            &vec![accs_instance.r_y.clone()],
             &r_x_prime,
         );
 
@@ -1129,7 +1140,7 @@ pub mod test {
         let ccs = get_test_ccs::<G1Projective>();
         let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
 
-        let mu = 1;
+        let mu = 2;
         let nu = 2;
 
         // Generate a mu accs & nu CCCS satisfying witness
