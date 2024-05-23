@@ -3,6 +3,23 @@
 version = 3
 
 [[package]]
+name = "Kilonova-poc"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ec",
+ "ark-ff",
+ "ark-poly",
+ "ark-serialize",
+ "ark-std",
+ "displaydoc",
+ "rayon",
+ "subroutines",
+ "thiserror",
+ "transcript",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -329,23 +346,6 @@ dependencies = [
  "keccak",
  "rand_core",
  "zeroize",
-]
-
-[[package]]
-name = "multifolding-poc"
-version = "0.2.0"
-dependencies = [
- "ark-bls12-381",
- "ark-ec",
- "ark-ff",
- "ark-poly",
- "ark-serialize",
- "ark-std",
- "displaydoc",
- "rayon",
- "subroutines",
- "thiserror",
- "transcript",
 ]
 
 [[package]]
