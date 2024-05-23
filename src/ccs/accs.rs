@@ -214,7 +214,7 @@ pub mod test {
         assert_eq!(vec_L_j_x.len(), accs.v.len());
 
         // // Make sure that the accs is not satisfied given these L_j(x)
-        // // i.e. summing L_j(x) over the hypercube should not give v_j for all j
+        // // i.e. summing L_j(x) over the  should not give v_j for all j
         // let mut satisfied = true;
         // for (v_i, L_j_x) in accs.v.into_iter().zip(vec_L_j_x) {
         //     let sum_L_j_x = BooleanHypercube::new(ccs.s)
