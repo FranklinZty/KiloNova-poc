@@ -165,8 +165,8 @@ pub mod test {
     fn test_compute_q() -> () {
         let mut rng = test_rng();
 
-        let ccs = get_test_ccs::<G1Projective>();
-        let z = get_test_z(3);
+        let ccs = get_test_ccs::<G1Projective>(5);
+        let z = get_test_z(3, 5);
 
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
         let (cccs, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z);
@@ -187,8 +187,8 @@ pub mod test {
     fn test_compute_Q() -> () {
         let mut rng = test_rng();
 
-        let ccs = get_test_ccs();
-        let z = get_test_z(3);
+        let ccs = get_test_ccs(5);
+        let z = get_test_z(3, 5);
         ccs.check_relation(&z).unwrap();
 
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
@@ -225,8 +225,8 @@ pub mod test {
     fn test_Q_against_q() -> () {
         let mut rng = test_rng();
 
-        let ccs = get_test_ccs();
-        let z = get_test_z(3);
+        let ccs = get_test_ccs(5);
+        let z = get_test_z(3, 5);
         ccs.check_relation(&z).unwrap();
 
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);

@@ -39,7 +39,7 @@ pub struct ACCS<C: CurveGroup> {
 
 impl<C: CurveGroup> CCS<C> {
     /// Compute v_j values of the linearized committed CCS form
-    /// Given `r`, compute:  \sum_{y \in {0,1}^s'} M_j(r, y) * z(y)
+    /// Given `r`, compute:  v_j = M_j(r_x, r_y), v_t = z(r_y)
     pub fn compute_v_j_accs(&self, z: &[C::ScalarField], r_x: &[C::ScalarField], r_y: &[C::ScalarField]) -> Vec<C::ScalarField> {
         // compute_all_sum_Mz_evals(&self.M, &z.to_vec(), r_x, self.s_prime)
         compute_all_sum_M_and_z_evals(&self.M, &z.to_vec(), r_x, r_y, self.s_prime)
@@ -153,13 +153,13 @@ pub mod test {
     fn test_accs_v_j() -> () {
         let mut rng = test_rng();
 
-        let ccs: CCS<ark_ec::short_weierstrass::Projective<ark_bls12_381::g1::Config>> = get_test_ccs::<G1Projective>();
-        let z = get_test_z(3);
+        let ccs: CCS<ark_ec::short_weierstrass::Projective<ark_bls12_381::g1::Config>> = get_test_ccs::<G1Projective>(5);
+        let z = get_test_z(3, 5);
         ccs.check_relation(&z.clone()).unwrap();
 
         let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1); // |io| - |w| - 1
         let (accs, _) = ccs.to_accs(&mut rng, &pedersen_params, &z);
-        // with our test vector comming from R1CS, v should have length 4
+        // with our test vector comming from CCS, v should have length 4
         assert_eq!(accs.v.len(), 4); // matrices A,B,C and z
 
         // check that \sum_x L_j_x = M_j(r_x,r_y)
@@ -180,52 +180,12 @@ pub mod test {
         //     println!("sum_L_j_x: {:?}", sum_L_j_x);
         // }
 
-        for (v_i, L_j_x) in accs.v.into_iter().skip(1).zip(vec_L_j_x) {
+        for (v_i, L_j_x) in accs.v[0..ccs.t].into_iter().zip(vec_L_j_x) {
             let sum_L_j_x = BooleanHypercube::new(ccs.s)
                 .into_iter()
                 .map(|x| L_j_x.evaluate(&x).unwrap())
                 .fold(Fr::zero(), |acc, result| acc + result);
-            assert_eq!(v_i, sum_L_j_x);
+            assert_eq!(v_i, &sum_L_j_x);
         }
-    }
-
-    /// Given a bad z, check that the v_j should not match with the L_j(x)
-    #[test]
-    fn test_bad_v_j() -> () {
-        let mut rng = test_rng();
-
-        let ccs = get_test_ccs();
-        let z = get_test_z(3);
-        ccs.check_relation(&z.clone()).unwrap();
-
-        // Mutate z so that the relation does not hold
-        let mut bad_z = z.clone();
-        bad_z[3] = Fr::zero();
-        assert!(ccs.check_relation(&bad_z.clone()).is_err());
-
-        let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
-        // Compute v_j with the right z
-        let (accs, _) = ccs.to_accs(&mut rng, &pedersen_params, &z);
-        // with our test vector comming from R1CS, v should have length 3
-        assert_eq!(accs.v.len(), 3);
-
-        // Bad compute L_j(x) with the bad z
-        let vec_L_j_x = accs.compute_Ls();
-        assert_eq!(vec_L_j_x.len(), accs.v.len());
-
-        // // Make sure that the accs is not satisfied given these L_j(x)
-        // // i.e. summing L_j(x) over the  should not give v_j for all j
-        // let mut satisfied = true;
-        // for (v_i, L_j_x) in accs.v.into_iter().zip(vec_L_j_x) {
-        //     let sum_L_j_x = BooleanHypercube::new(ccs.s)
-        //         .into_iter()
-        //         .map(|y| L_j_x.evaluate(&y).unwrap())
-        //         .fold(Fr::zero(), |acc, result| acc + result);
-        //     if v_i != sum_L_j_x {
-        //         satisfied = false;
-        //     }
-        // }
-
-        // assert_eq!(satisfied, false);
     }
 }

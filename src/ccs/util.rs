@@ -150,8 +150,8 @@ pub mod test {
 
     #[test]
     fn test_compute_sum_Mz_over_boolean_hypercube() -> () {
-        let ccs = get_test_ccs::<G1Projective>();
-        let z = get_test_z(3);
+        let ccs = get_test_ccs::<G1Projective>(5);
+        let z = get_test_z(3, 5);
         ccs.check_relation(&z).unwrap();
         let z_mle = vec_to_mle(ccs.s_prime, &z);
 
@@ -177,7 +177,7 @@ pub mod test {
     #[test]
     fn test_compute_sum_eqM_over_boolean_hypercube() -> () {
         let mut rng = test_rng();
-        let ccs = get_test_ccs::<G1Projective>();
+        let ccs = get_test_ccs::<G1Projective>(5);
         let r_y: Vec<Fr> = (0..ccs.s_prime).map(|_| Fr::rand(&mut rng)).collect();
 
         // check that \sum_{y} eq(r_y, y) M_j(x,y) is correctly computed
@@ -216,7 +216,7 @@ pub mod test {
         let mut rng = test_rng();
 
         // s = 2, s' = 3
-        let ccs = get_test_ccs::<G1Projective>();
+        let ccs = get_test_ccs::<G1Projective>(5);
 
         let M = ccs.M[0].clone();
         let M_mle = matrix_to_mle(M.clone());

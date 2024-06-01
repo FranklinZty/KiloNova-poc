@@ -118,12 +118,12 @@ pub mod test {
     /// Return a CCS circuit that implements the Vitalik `x^3 + x + 5 == 35` (from
     /// https://www.vitalik.ca/general/2016/12/10/qap.html )
     #[cfg(test)]
-    pub fn get_test_ccs<C: CurveGroup>() -> CCS<C> {
+    pub fn get_test_ccs<C: CurveGroup>(c: usize) -> CCS<C> {
         let A = to_F_matrix(vec![
             vec![0, 1, 0, 0, 0, 0],
             vec![0, 0, 0, 1, 0, 0],
             vec![0, 1, 0, 0, 1, 0],
-            vec![5, 0, 0, 0, 0, 1],
+            vec![c, 0, 0, 0, 0, 1],
         ]);
         let B = to_F_matrix(vec![
             vec![0, 1, 0, 0, 0, 0],
@@ -142,12 +142,12 @@ pub mod test {
 
     /// Computes the z vector for the given input for Vitalik's equation.
     #[cfg(test)]
-    pub fn get_test_z<F: PrimeField>(input: usize) -> Vec<F> {
+    pub fn get_test_z<F: PrimeField>(input: usize, c: usize) -> Vec<F> {
         // z = (1, io, w)
         to_F_vec(vec![
             1,
             input,
-            input * input * input + input + 5, // x^3 + x + 5
+            input * input * input + input + c, // x^3 + x + 5
             input * input,                     // x^2
             input * input * input,             // x^2 * x
             input * input * input + input,     // x^3 + x
@@ -157,8 +157,8 @@ pub mod test {
     /// Test that a basic CCS relation can be satisfied
     #[test]
     fn test_ccs_relation() -> () {
-        let ccs = get_test_ccs::<G1Projective>();
-        let z = get_test_z(3);
+        let ccs = get_test_ccs::<G1Projective>(6);
+        let z = get_test_z(3, 6);
 
         ccs.check_relation(&z).unwrap();
     }

@@ -39,24 +39,25 @@ pub struct Genericfolding<C: CurveGroup> {
 impl<C: CurveGroup> Genericfolding<C> {
     /// Compute the arrays of sigma_j and tau_j from step 5 corresponding to the ACCS and CCCS
     pub fn compute_sigmas_and_taus(
-        ccs: &CCS<C>,
+        accs_instances: &[ACCS<C>],
+        cccs_instances: &[CCCS<C>],
         z_accs: &[Vec<C::ScalarField>],
         z_cccs: &[Vec<C::ScalarField>],
-        r_y: &Vec<Vec<C::ScalarField>>,
         r_x_prime: &[C::ScalarField],
     ) -> (Vec<Vec<C::ScalarField>>, Vec<Vec<C::ScalarField>>) {
+        let s_prime = accs_instances[0].ccs.s_prime;
         // sigma_j = \sum_y eq(r_y, y) M(r_x', y) for accs
         let mut sigmas: Vec<Vec<C::ScalarField>> = Vec::new();
         for i in 0..z_accs.len() {
             // sigmas
-            let sigma_i = compute_all_sum_eqM_evals(&ccs.M, &r_y[i], r_x_prime, ccs.s_prime);
+            let sigma_i = compute_all_sum_eqM_evals(&accs_instances[i].ccs.M, &accs_instances[i].r_y, r_x_prime, s_prime);
             sigmas.push(sigma_i);
         }
         // tau_j = \sum_y M_j(r_x', y) z(y) for cccs
         let mut taus: Vec<Vec<C::ScalarField>> = Vec::new();
-        for z_cccs_i in z_cccs {
+        for i in 0..z_cccs.len() {
             // taus
-            let tau_i = compute_all_sum_Mz_evals(&ccs.M, z_cccs_i, r_x_prime, ccs.s_prime);
+            let tau_i = compute_all_sum_Mz_evals(&cccs_instances[i].ccs.M, &z_cccs[i], r_x_prime, s_prime);
             taus.push(tau_i);
         }
         (sigmas, taus)
@@ -74,22 +75,22 @@ impl<C: CurveGroup> Genericfolding<C> {
     ) -> C::ScalarField {
         let mut cx = C::ScalarField::zero();
 
-        let mut e_accs = Vec::new();
+        // the first part: \sum_j gamma^j * eq(rx_j, r_x') * sigma_j
+        let mut e1 = Vec::new();
         for r_x in vec_r_x {
-            e_accs.push(eq_eval(r_x, r_x_prime).unwrap());
+            e1.push(eq_eval(r_x, r_x_prime).unwrap());
         }
         for (i, sigmas) in vec_sigmas.iter().enumerate() {
-            // (sum gamma^j * e_i * sigma_j)
             for (j, sigma_j) in sigmas.iter().enumerate() {
                 let gamma_j = gamma.pow([(i * ccs.t + j) as u64]);
-                cx += gamma_j * e_accs[i] * sigma_j;
+                cx += gamma_j * e1[i] * sigma_j;
             }
         }
 
+        // the second part: gamma^t * eq(alpha, r_x') * \sum_i c_i * \prod_j tau_j
         let mu = vec_sigmas.len();
         let e2 = eq_eval(alpha, r_x_prime).unwrap();
         for (k, taus) in vec_taus.iter().enumerate() {
-            // + gamma^{t+1} * e2 * sum c_i * prod theta_j
             let mut lhs = C::ScalarField::zero();
             for i in 0..ccs.q {
                 let mut prod = C::ScalarField::one();
@@ -121,10 +122,10 @@ impl<C: CurveGroup> Genericfolding<C> {
             vec_Ls.append(&mut Ls);
         }
         // compute Q(x) for all cccs instances (amount: nu)
-        let mut vec_Q: Vec<VirtualPolynomial<C::ScalarField>> = Vec::new();
+        let mut vec_Qs: Vec<VirtualPolynomial<C::ScalarField>> = Vec::new();
         for (i, cccs_instance) in cccs_instances.iter().enumerate() {
             let Q = cccs_instance.compute_Q(&z_cccs[i], alpha);
-            vec_Q.push(Q);
+            vec_Qs.push(Q);
         }
         let mut f = vec_Ls[0].clone();
 
@@ -137,7 +138,7 @@ impl<C: CurveGroup> Genericfolding<C> {
             f = f.add(L_j);
         }
         // compute RLC of Q_j(x) as \sum_j gamma^{mu*t + j} Q_j(x)
-        for (i, Q_i) in vec_Q.iter_mut().enumerate() {
+        for (i, Q_i) in vec_Qs.iter_mut().enumerate() {
             let gamma_mut_i = gamma.pow([(mu * cccs_instances[0].ccs.t + i) as u64]);
             Q_i.scalar_mul(&gamma_mut_i);
             f = f.add(Q_i);
@@ -147,23 +148,29 @@ impl<C: CurveGroup> Genericfolding<C> {
 
     /// Compute the arrays of epsilon_j and theta_j from step 10 corresponding to the ACCS and CCCS
     pub fn compute_epsilons_and_thetas(
-        ccs: &CCS<C>,
+        accs_instances: &[ACCS<C>],
+        cccs_instances: &[CCCS<C>],
         z_accs: &[Vec<C::ScalarField>],
         z_cccs: &[Vec<C::ScalarField>],
         r_x_prime: &Vec<C::ScalarField>,
         r_y_prime: &Vec<C::ScalarField>,
     ) -> (Vec<Vec<C::ScalarField>>, Vec<Vec<C::ScalarField>>) {
         // epsilon[i] contains (z(r_y), M_j(r_x, r_y)...) for accs_i
+        let s_prime = accs_instances[0].ccs.s_prime;
         let mut epsilons: Vec<Vec<C::ScalarField>> = Vec::new(); 
-        for z_accs_i in z_accs {
-            let res = compute_all_sum_M_and_z_evals(&ccs.M, z_accs_i, r_x_prime, r_y_prime, ccs.s_prime);
+        for i in 0..z_accs.len() {
+            let res = compute_all_sum_M_and_z_evals(&accs_instances[i].ccs.M, &z_accs[i], r_x_prime, r_y_prime, s_prime);
             epsilons.push(res);
         }
         // theta[i] contains (z(r_y), M_j(r_x, r_y)...) for cccs_i
         let mut thetas: Vec<Vec<C::ScalarField>> = Vec::new();
-        for z_cccs_i in z_cccs {
-            let res = compute_all_sum_M_and_z_evals(&ccs.M, z_cccs_i, r_x_prime, r_y_prime, ccs.s_prime);
-            thetas.push(res);
+        if cccs_instances.len() == 0 {
+            thetas.push(vec![C::ScalarField::zero(); accs_instances[0].ccs.t+1]);
+        } else {
+            for i in 0..z_cccs.len() {
+                let res = compute_all_sum_M_and_z_evals(&cccs_instances[i].ccs.M, &z_cccs[i], r_x_prime, r_y_prime, s_prime);
+                thetas.push(res);
+            }
         }
         (epsilons, thetas)
     }
@@ -179,21 +186,21 @@ impl<C: CurveGroup> Genericfolding<C> {
     ) -> C::ScalarField {
         let mut cy = C::ScalarField::zero();
 
-        let mut e_accs = Vec::new();
+        // the first part: \sum_j delta^j * eq(r_y, r_y') * epsilon_j, j=0,..,t, where epsilon[t] = z(r_y')
+        let mut e3 = Vec::new();
         for r_y in vec_r_y {
-            e_accs.push(eq_eval(r_y, r_y_prime).unwrap());
+            e3.push(eq_eval(r_y, r_y_prime).unwrap());
         }
         for (i, epsilons) in vec_epsilons.iter().enumerate() {
-            // e_i * \sum_j delta^j * epsilon_j, j = 0,...,t
             for (j, epsilon_j) in epsilons.iter().enumerate() {
                 let delta_j = delta.pow([(i * (ccs.t + 1) + j) as u64]);
-                cy += delta_j * e_accs[i] * epsilon_j;
+                cy += delta_j * e3[i] * epsilon_j;
             }
         }
 
+        // the second part: delta^t * \sum_j delta^j * theta_j * theta_{t}, j=0,..,t-1 where theta_{t} = z(r_y')
         let mu = vec_epsilons.len();
         for (k, thetas) in vec_thetas.iter().enumerate() {
-            // delta^{t+1} theta_t * \sum_j delta^j * theta_j, j = 0,...,t-1
             for (j, theta_j) in thetas[..ccs.t].iter().enumerate() {
                 let delta_j = delta.pow([(mu * (ccs.t + 1) + k * ccs.t + j) as u64]);
                 cy += delta_j * theta_j * thetas[ccs.t];
@@ -452,10 +459,10 @@ impl<C: CurveGroup> Genericfolding<C> {
         // Step 5: compute sigmas and thetas
         let vec_r_y: Vec<Vec<C::ScalarField>> = running_instances.iter().map(|accs| accs.r_y.clone()).collect();
         let (sigmas, taus) = Self::compute_sigmas_and_taus(
-            &running_instances[0].ccs,
+            running_instances,
+            new_instances,
             &z_accs,
             &z_cccs,
-            &vec_r_y,
             &r_x_prime,
         );
 
@@ -481,7 +488,8 @@ impl<C: CurveGroup> Genericfolding<C> {
         
         // Step 10: compute epsilons and thetas
         let (epsilons, thetas) = Self::compute_epsilons_and_thetas(
-            &running_instances[0].ccs,
+            &running_instances,
+            &new_instances,
             &z_accs,
             &z_cccs,
             &r_x_prime,
@@ -680,69 +688,121 @@ impl<C: CurveGroup> Genericfolding<C> {
 #[cfg(test)]
 pub mod test {
     use super::*;
+    use crate::ccs::ccs::CCS;
+    use crate::ccs::cccs::CCCS;
+    use crate::ccs::accs::{self, ACCS};
     use crate::ccs::ccs::test::{get_test_ccs, get_test_z};
     use ark_std::test_rng;
     use ark_std::UniformRand;
+    use rayon::vec;
 
-    use crate::ccs::pedersen::Pedersen;
+    use crate::ccs::pedersen::{Pedersen, Params};
     use ark_bls12_381::{Fr, G1Projective};
 
     const rnd : u32 = 1;
     // NIMFS: Non Interactive Genericfolding Scheme
     type NIMFS = Genericfolding<G1Projective>;
 
+    #[derive(Debug)]
+    pub struct TestInstances<C: CurveGroup> {
+        pub accs_instances: Vec<ACCS<C>>,
+        pub cccs_instances: Vec<CCCS<C>>,
+        pub z_accs: Vec<Vec<C::ScalarField>>,
+        pub z_cccs: Vec<Vec<C::ScalarField>>,
+        pub w_accs: Vec<Witness<C::ScalarField>>,
+        pub w_cccs: Vec<Witness<C::ScalarField>>,
+        pub gamma: C::ScalarField,
+        pub delta: C::ScalarField,
+        pub alpha: Vec<C::ScalarField>,
+        pub r_x_prime: Vec<C::ScalarField>,
+        pub r_y_prime: Vec<C::ScalarField>,
+        pub pedersen_params: Params<C>,
+    }
+
+    #[cfg(test)]
+    pub fn get_mu_nu_test_instances(mu: usize, nu: usize) -> (TestInstances<G1Projective>) {
+                // Generate a mu accs & nu CCCS satisfying witness
+                let mut rng = test_rng();
+                let mut ccs_a = Vec::new();
+                let mut z_accs = Vec::new();
+                for i in 0..mu {
+                    let ccs = get_test_ccs::<G1Projective>(i);
+                    ccs_a.push(ccs);
+                    let z = get_test_z(i + 3, i);
+                    ccs_a[i].check_relation(&z.clone()).unwrap();
+                    z_accs.push(z);
+                }
+                let mut ccs_c = Vec::new();
+                let mut z_cccs = Vec::new();
+                for i in 0..nu {
+                    let ccs = get_test_ccs::<G1Projective>(i);
+                    ccs_c.push(ccs);
+                    let z = get_test_z(nu + i + 3, i);
+                    ccs_c[i].check_relation(&z).unwrap();
+                    z_cccs.push(z);
+                }
+        
+                // Create a basic CCS circuit
+                ccs_a.iter().zip(ccs_c.iter()).fold(true, |acc, (ccs1, ccs2)| acc && ccs1.l==ccs2.l && ccs1.n==ccs2.n && ccs1.m==ccs2.m);
+                let pedersen_params = Pedersen::new_params(&mut rng, ccs_a[0].n - ccs_a[0].l - 1);
+        
+                // Create the ACCS instances out of z_accs
+                let mut accs_instances = Vec::new();
+                let mut w_accs = Vec::new();
+                for i in 0..mu {
+                    let (running_instance, w) = ccs_a[i].to_accs(&mut rng, &pedersen_params, &z_accs[i]);
+                    accs_instances.push(running_instance);
+                    w_accs.push(w);
+                }
+                // Create the CCCS instance out of z_cccs
+                let mut cccs_instances = Vec::new();
+                let mut w_cccs = Vec::new();
+                for i in 0..nu {
+                    let (new_instance, w) = ccs_c[i].to_cccs(&mut rng, &pedersen_params, &z_cccs[i]);
+                    cccs_instances.push(new_instance);
+                    w_cccs.push(w);
+                }
+                TestInstances {
+                         accs_instances,
+                         cccs_instances,
+                         z_accs,
+                         z_cccs,
+                         w_accs,
+                         w_cccs,
+                         gamma: Fr::rand(&mut rng), 
+                         delta: Fr::rand(&mut rng), 
+                         alpha: (0..ccs_a[0].s).map(|_| Fr::rand(&mut rng)).collect(),
+                         r_x_prime: (0..ccs_a[0].s).map(|_| Fr::rand(&mut rng)).collect(),
+                         r_y_prime: (0..ccs_a[0].s_prime).map(|_| Fr::rand(&mut rng)).collect(),
+                         pedersen_params,
+                }
+
+    }
+
     #[test]
     fn test_compute_sigmas_and_taus() -> () {
-        let mut rng = test_rng();
-
-        // Create a basic CCS circuit
-        let ccs = get_test_ccs::<G1Projective>();
-        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
-
+        // Setup: create multiple accs and cccs instances and required randomness
         let mu = 10;
         let nu = 15;
 
-        // Generate a mu accs & nu CCCS satisfying witness
-        let mut z_accs = Vec::new();
-        for i in 0..mu {
-            let z = get_test_z(i + 3);
-            z_accs.push(z);
-        }
-        let mut z_cccs = Vec::new();
-        for i in 0..nu {
-            let z = get_test_z(nu + i + 3);
-            z_cccs.push(z);
-        }
+        let test_instances = get_mu_nu_test_instances(mu, nu);
 
-        // Create the ACCS instances out of z_accs
-        let mut accs_instances = Vec::new();
-        let mut w_accs = Vec::new();
-        for i in 0..mu {
-            let (running_instance, w) = ccs.to_accs(&mut rng, &pedersen_params, &z_accs[i]);
-            accs_instances.push(running_instance);
-            w_accs.push(w);
-        }
-        // Create the CCCS instance out of z_cccs
-        let mut cccs_instances = Vec::new();
-        let mut w_cccs = Vec::new();
-        for i in 0..nu {
-            let (new_instance, w) = ccs.to_cccs(&mut rng, &pedersen_params, &z_cccs[i]);
-            cccs_instances.push(new_instance);
-            w_cccs.push(w);
-        }
+        let accs_instances = test_instances.accs_instances.clone();
+        let cccs_instances = test_instances.cccs_instances.clone();
+        let z_accs = test_instances.z_accs.clone();
+        let z_cccs = test_instances.z_cccs.clone();
 
-        // run steps 1 and 2
-        let gamma: Fr = Fr::rand(&mut rng);
-        let alpha: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
-        let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
+        let gamma = test_instances.gamma;
+        let alpha = test_instances.alpha.clone();
+        let r_x_prime = test_instances.r_x_prime.clone();
 
         // compute sigmas and taus
-        let vec_r_y: Vec<Vec<Fr>> = accs_instances.iter().map(|accs| accs.r_y.clone()).collect();
+        // let vec_r_y: Vec<Vec<Fr>> = accs_instances.iter().map(|accs| accs.r_y.clone()).collect();
         let (sigmas, taus) = NIMFS::compute_sigmas_and_taus(
-            &accs_instances[0].ccs,
+            &accs_instances,
+            &cccs_instances,
             &z_accs.clone(),
             &z_cccs.clone(),
-            &vec_r_y,
             &r_x_prime,
         );
 
@@ -759,7 +819,7 @@ pub mod test {
         let expected_cx = f.evaluate(&r_x_prime).unwrap();
         let vec_r_x: Vec<Vec<Fr>> = accs_instances.iter().map(|accs| accs.r_x.clone()).collect();
         let cx = NIMFS::compute_cx_from_sigmas_and_taus(
-            &ccs,
+            &accs_instances[0].ccs,
             &sigmas,
             &taus,
             gamma,
@@ -772,111 +832,102 @@ pub mod test {
 
     #[test]
     fn test_compute_fx() -> () {
-        let ccs = get_test_ccs();
-        let z1 = get_test_z(3);
-        let z2 = get_test_z(4);
+        // Setup: create multiple accs and cccs instances and required randomness
+        let mu = 10;
+        let nu = 15;
 
-        ccs.check_relation(&z1).unwrap();
-        ccs.check_relation(&z2).unwrap();
+        let test_instances = get_mu_nu_test_instances(mu, nu);
 
-        let mut rng = test_rng(); // TMP
-        let gamma: Fr = Fr::rand(&mut rng);
-        let alpha: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
+        let accs_instances = test_instances.accs_instances.clone();
+        let cccs_instances = test_instances.cccs_instances.clone();
+        let z_accs = test_instances.z_accs.clone();
+        let z_cccs = test_instances.z_cccs.clone();
 
-        // Initialize a genericfolding object
-        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
-        let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
-        let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
+        let gamma = test_instances.gamma;
+        let alpha = test_instances.alpha.clone();
+        let r_x_prime = test_instances.r_x_prime.clone();
 
-        // compute a vector v' = \sum_{y} eq(r_y, y) M(r_x, y) for testing f(x), specifically
-        // v' = \sum_y eq(r_y, y) M(r_x, y) = \sum_x L_j(x)
-        // 0 = \sum_x Q(x)
-        let (test_vec_v, _) =  Genericfolding::<G1Projective>::compute_sigmas_and_taus(
-            &ccs,
-            &vec![z1.clone()],
-            &vec![z2.clone()],
-            &vec![accs_instance.r_y.clone()],
-            &accs_instance.r_x.clone(),
-        );
-
-        // compute the sum of the first-round sumcheck as 
-        // sum_x = \sum_j gamma^j v_j, j=0,...,t-1
-        let mut sum_x = Fr::zero();
-        for j in 0..test_vec_v[0].len() {
-            let gamma_j = gamma.pow([j as u64]);
-            sum_x += test_vec_v[0][j] * gamma_j; // test_vec_v only has one row for one accs instance
-        }
+        let s = accs_instances[0].ccs.s.clone();
 
         // Compute f(x)
         let f = NIMFS::compute_fx(
-            &vec![accs_instance.clone()],
-            &vec![cccs_instance.clone()],
-            &vec![z2.clone()],
+            &accs_instances,
+            &cccs_instances,
+            &z_cccs.clone(),
             gamma,
             &alpha,
         );
 
         // evaluate f(x) over x \in {0,1}^s
         let mut f_on_bhc = Fr::zero();
-        for x in BooleanHypercube::new(ccs.s).into_iter() {
+        for x in BooleanHypercube::new(s).into_iter() {
             f_on_bhc += f.evaluate(&x).unwrap();
         }
 
         // evaluate sum_{j \in [t]} (gamma^j * Lj(x)) over x \in {0,1}^s
         let mut sum_Lj_on_bhc = Fr::zero();
-        let vec_L = accs_instance.compute_Ls();
-        for x in BooleanHypercube::new(ccs.s).into_iter() {
-            for j in 0..vec_L.len() {
-                let gamma_j = gamma.pow([j as u64]);
-                sum_Lj_on_bhc += vec_L[j].evaluate(&x).unwrap() * gamma_j;
+        for i in 0..accs_instances.len() {
+            let vec_L = accs_instances[i].compute_Ls();
+            for x in BooleanHypercube::new(s).into_iter() {
+                for j in 0..vec_L.len() {
+                    let gamma_ij = gamma.pow([(i*accs_instances[0].ccs.t + j) as u64]);
+                    sum_Lj_on_bhc += vec_L[j].evaluate(&x).unwrap() * gamma_ij;
+                }
+            }
+        }
+
+        // compute sum_x = \sum_j gamma^j v_j for \sum_x f(x) 
+        let mut sum_x = Fr::zero();
+        for i in 0..accs_instances.len() {
+            for j in 0..accs_instances[i].v.len()-1 {
+                let gamma_ij = gamma.pow([(i*accs_instances[0].ccs.t + j) as u64]);
+                sum_x += accs_instances[i].v[j] * gamma_ij;
             }
         }
 
         // Q(x) over bhc is assumed to be zero, as checked in the test 'test_compute_Q'
         assert_ne!(f_on_bhc, Fr::zero());
 
-        // evaluating g(x) over the boolean hypercube should give the same result as evaluating the
+        // evaluating f(x) over the boolean hypercube should give the same result as evaluating the
         // sum of gamma^j * Lj(x) over the boolean hypercube
         assert_eq!(f_on_bhc, sum_Lj_on_bhc);
 
-        // evaluating g(x) over the boolean hypercube should give the same result as evaluating the
-        // sum of gamma^j * v_j over j \in [t]
+        
+        // evaluating f(x) over the boolean hypercube should give the same result as sum_x
         assert_eq!(f_on_bhc, sum_x);
     }
 
     #[test]
     fn test_compute_epsilons_and_thetas() -> () {
-        let ccs = get_test_ccs();
-        let z1 = get_test_z(3);
-        let z2 = get_test_z(4);
-        ccs.check_relation(&z1).unwrap();
-        ccs.check_relation(&z2).unwrap();
+        // Setup: create multiple accs and cccs instances and required randomness
+        let mu = 10;
+        let nu = 15;
 
-        // run steps 1 and 2
-        let mut rng = test_rng();
-        let delta: Fr = Fr::rand(&mut rng);
-        let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
-        let r_y_prime: Vec<Fr> = (0..ccs.s_prime).map(|_| Fr::rand(&mut rng)).collect();
-        
-        // Initialize a genericfolding object
-        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
-        let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
-        let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
+        let test_instances = get_mu_nu_test_instances(mu, nu);
 
+        let accs_instances = test_instances.accs_instances.clone();
+        let cccs_instances = test_instances.cccs_instances.clone();
+        let z_accs = test_instances.z_accs.clone();
+        let z_cccs = test_instances.z_cccs.clone();
+
+        let delta = test_instances.delta;
+        let r_x_prime = test_instances.r_x_prime.clone();
+        let r_y_prime = test_instances.r_y_prime.clone();
 
         let (epsilons, thetas) = NIMFS::compute_epsilons_and_thetas(
-            &accs_instance.ccs,
-            &vec![z1.clone()],
-            &vec![z2.clone()],
+            &accs_instances,
+            &cccs_instances,
+            &z_accs.clone(),
+            &z_cccs.clone(),
             &r_x_prime,
             &r_y_prime,
         );
 
         let g = NIMFS::compute_gy(
-            &vec![accs_instance.clone()],
-            &vec![cccs_instance.clone()],
-            &vec![z1.clone()],
-            &vec![z2.clone()],
+            &accs_instances.clone(),
+            &cccs_instances.clone(),
+            &z_accs.clone(),
+            &z_cccs.clone(),
             delta,
             &r_x_prime,
         );
@@ -884,12 +935,13 @@ pub mod test {
         // we expect g(r_y_prime) = \sum_j delta^j R_j(r_y_prime) + delta^{t+1} S(r_y_prime) + delta^{t+1} \sum_j delta^j T_j(r_y_prime)
         // to be equal to: cy from compute_cy_from_epsilons_and_thetas
         let expected_cy = g.evaluate(&r_y_prime).unwrap();
+        let vec_r_y: Vec<Vec<Fr>> = accs_instances.iter().map(|accs| accs.r_y.clone()).collect();
         let cy = NIMFS::compute_cy_from_epsilons_and_thetas(
-            &ccs,
+            &accs_instances[0].ccs,
             &epsilons,
             &thetas,
             delta,
-            &vec![accs_instance.r_y],
+            &vec_r_y,
             &r_y_prime,
         );
         assert_eq!(cy, expected_cy);
@@ -897,86 +949,91 @@ pub mod test {
 
     #[test]
     fn test_compute_gy() -> () {
-        let ccs = get_test_ccs();
-        let z1 = get_test_z(3);
-        let z2 = get_test_z(4);
+        // Setup: create multiple accs and cccs instances and required randomness
+        let mu = 10;
+        let nu = 15;
 
-        ccs.check_relation(&z1).unwrap();
-        ccs.check_relation(&z2).unwrap();
+        let test_instances = get_mu_nu_test_instances(mu, nu);
 
-        let mut rng = test_rng(); // TMP
-        let delta: Fr = Fr::rand(&mut rng);
-        let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
+        let accs_instances = test_instances.accs_instances.clone();
+        let cccs_instances = test_instances.cccs_instances.clone();
+        let z_accs = test_instances.z_accs.clone();
+        let z_cccs = test_instances.z_cccs.clone();
 
-        // Initialize a genericfolding object
-        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
-        let (accs_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
-        let (cccs_instance, _) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
+        let delta = test_instances.delta;
+        let r_x_prime = test_instances.r_x_prime.clone();
+
+        let t = accs_instances[0].ccs.t.clone();
+        let s_prime = accs_instances[0].ccs.s_prime.clone();
 
         // compute the sum of the second-round sumcheck as 
         // sum_y = \sum_j \delta^j \sigma_j + \delta^{t+1} v_{t} + \delta^{t+1} \sum_j \delta^j \tau_j
         let mut sum_y = Fr::zero();
 
         let (vec_sigmas, vec_taus) = NIMFS::compute_sigmas_and_taus(
-            &accs_instance.ccs,
-            &vec![z1.clone()],
-            &vec![z2.clone()],
-            &vec![accs_instance.r_y.clone()],
+            &accs_instances.clone(),
+            &cccs_instances.clone(),
+            &z_accs.clone(),
+            &z_cccs.clone(),
             &r_x_prime,
         );
 
         // compute \sum_j \delta^j \sigma_j + \delta^{t+1} v_{t}
         for (i, sigmas) in vec_sigmas.iter().enumerate() {
             for (j, sigma_j) in sigmas.iter().enumerate() {
-                let delta_j = delta.pow([(i * (ccs.t + 1) + j) as u64]);
+                let delta_j = delta.pow([(i * (t + 1) + j) as u64]);
                 sum_y += delta_j * sigma_j;
             }
-            sum_y += delta.pow([((i + 1) * (ccs.t + 1) -1) as u64]) * accs_instance.v[ccs.t];
+            sum_y += delta.pow([((i + 1) * (t + 1) -1) as u64]) * accs_instances[i].v[t];
         }
 
         // compute \delta^{t+1} \sum_j \delta^j \tau_j
         let mu = vec_sigmas.len();
-        for (k, taus) in vec_taus.iter().enumerate() {
+        for (i, taus) in vec_taus.iter().enumerate() {
             for (j, tau_j) in taus.iter().enumerate() {
-                let delta_k = delta.pow([(mu * (ccs.t + 1) + k * ccs.t + j) as u64]);
-                sum_y += delta_k * tau_j;
+                let delta_j = delta.pow([(mu * (t + 1) + i * t + j) as u64]);
+                sum_y += delta_j * tau_j;
             }
         }
 
         // Compute g(y)
         let gy = NIMFS::compute_gy(
-            &vec![accs_instance.clone()],
-            &vec![cccs_instance.clone()],
-            &vec![z1.clone()],
-            &vec![z2.clone()],
+            &accs_instances.clone(),
+            &cccs_instances.clone(),
+            &z_accs.clone(),
+            &z_cccs.clone(),
             delta,
             &r_x_prime,
         );
 
         // sum up g(y) over y \in {0,1}^s'
         let mut g_on_bhc = Fr::zero();
-        for y in BooleanHypercube::new(ccs.s_prime).into_iter() {
+        for y in BooleanHypercube::new(s_prime).into_iter() {
             g_on_bhc += gy.evaluate(&y).unwrap();
         }
 
         // sum up the first part of g(y): 
         // sum_j delta^j R_j(y) + delta^{t+1} S(y)
         let mut sum_RS_on_bhc = Fr::zero();
-        let vec_RS = accs_instance.compute_R_S(&r_x_prime, &z1);
-        for y in BooleanHypercube::new(ccs.s_prime).into_iter() {
-            for j in 0..vec_RS.len() {
-                let delta_j = delta.pow([j as u64]);
-                sum_RS_on_bhc += vec_RS[j].evaluate(&y).unwrap() * delta_j;
+        for i in 0..accs_instances.len(){
+            let vec_RS = accs_instances[i].compute_R_S(&r_x_prime, &z_accs[i]);
+            for y in BooleanHypercube::new(s_prime).into_iter() {
+                for j in 0..vec_RS.len() {
+                    let delta_j = delta.pow([(i * (t + 1) + j) as u64]);
+                    sum_RS_on_bhc += vec_RS[j].evaluate(&y).unwrap() * delta_j;
+                }
             }
         }
 
         // sum up the second part of g(y): 
         // delta^{t+1} sum_j delta^j T_j(y)
-        let vec_T = cccs_instance.compute_T(&r_x_prime, &z2);
-        for y in BooleanHypercube::new(ccs.s_prime).into_iter() {
-            for j in 0..vec_T.len() {
-                let delta_j = delta.pow([(ccs.t + 1 +j) as u64]);
-                sum_RS_on_bhc += vec_T[j].evaluate(&y).unwrap() * delta_j;
+        for i in 0..cccs_instances.len(){
+            let vec_T = cccs_instances[i].compute_T(&r_x_prime, &z_cccs[i]);
+            for y in BooleanHypercube::new(s_prime).into_iter() {
+                for j in 0..vec_T.len() {
+                    let delta_j = delta.pow([(mu * (t + 1) + i * t + j) as u64]);
+                    sum_RS_on_bhc += vec_T[j].evaluate(&y).unwrap() * delta_j;
+                }
             }
         }
 
@@ -993,76 +1050,36 @@ pub mod test {
 
     #[test]
     fn test_fold() -> () {
-        let ccs = get_test_ccs();
-        let z1 = get_test_z(3);
-        let z2 = get_test_z(4);
-        ccs.check_relation(&z1).unwrap();
-        ccs.check_relation(&z2).unwrap();
+        let ccs1 = get_test_ccs(5);
+        let ccs2 = get_test_ccs(6);
+        let z1 = get_test_z(3, 5);
+        let z2 = get_test_z(4, 6);
+        ccs1.check_relation(&z1).unwrap();
+        ccs2.check_relation(&z2).unwrap();
 
         let mut rng = test_rng();
-        let r_x_prime: Vec<Fr> = (0..ccs.s).map(|_| Fr::rand(&mut rng)).collect();
-        let r_y_prime: Vec<Fr> = (0..ccs.s_prime).map(|_| Fr::rand(&mut rng)).collect();
+        let r_x_prime: Vec<Fr> = (0..ccs1.s).map(|_| Fr::rand(&mut rng)).collect();
+        let r_y_prime: Vec<Fr> = (0..ccs1.s_prime).map(|_| Fr::rand(&mut rng)).collect();
 
         // Initialize a genericfolding object
-        let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
-        let (running_instance, _) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
+        let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs1.n - ccs1.l - 1);
+        let (accs, w1) = ccs1.to_accs(&mut rng, &pedersen_params, &z1);
+        let (cccs, w2) = ccs2.to_cccs(&mut rng, &pedersen_params, &z2);
+        accs.check_relation(&pedersen_params, &w1).unwrap();
+        cccs.check_relation(&pedersen_params, &w2).unwrap();
 
         let (epsilons, thetas) = Genericfolding::<G1Projective>::compute_epsilons_and_thetas(
-            &running_instance.ccs,
+            &vec![accs.clone()],
+            &vec![cccs.clone()],
             &vec![z1.clone()],
             &vec![z2.clone()],
             &r_x_prime,
             &r_y_prime,
         );
 
-        let pedersen_params = Pedersen::<G1Projective>::new_params(&mut rng, ccs.n - ccs.l - 1);
-
-        let (accs, w1) = ccs.to_accs(&mut rng, &pedersen_params, &z1);
-        let (cccs, w2) = ccs.to_cccs(&mut rng, &pedersen_params, &z2);
-
-        accs.check_relation(&pedersen_params, &w1).unwrap();
-        cccs.check_relation(&pedersen_params, &w2).unwrap();
 
         let mut rng = test_rng();
         let rho = Fr::rand(&mut rng);
-
-        // // check whether the accs derived from accs is satisfied
-        // let accs_from_accs = ACCS::<G1Projective> {
-        //     C: accs.C.clone(),
-        //     ccs: accs.ccs.clone(),
-        //     u: accs.u.clone(),
-        //     x: accs.x.clone(),
-        //     r_x: r_x_prime.clone(),
-        //     r_y: r_y_prime.clone(),
-        //     v: epsilons[0].clone(),
-        // };
-        // let z: Vec<Fr> = [vec![accs_from_accs.u], accs_from_accs.x.clone(), w1.w.to_vec()].concat();
-        // let computed_v_accs = accs_from_accs.ccs.compute_v_j_accs(&z, &r_x_prime, &r_y_prime);
-        // println!("check ACCS reltaions (from CCCS).");
-
-        // // check whether the accs derived from cccs is satisfied
-        // let accs_from_cccs = ACCS::<G1Projective> {
-        //     C: cccs.C.clone(),
-        //     ccs: cccs.ccs.clone(),
-        //     u: Fr::one(),
-        //     x: cccs.x.clone(),
-        //     r_x: r_x_prime.clone(),
-        //     r_y: r_y_prime.clone(),
-        //     v: thetas[0].clone(),
-        // };
-        // let z: Vec<Fr> = [vec![accs_from_cccs.u], accs_from_cccs.x.clone(), w2.w.to_vec()].concat();
-        // let computed_v_cccs = accs_from_cccs.ccs.compute_v_j_accs(&z, &r_x_prime, &r_y_prime);
-        // println!("check ACCS reltaions (from ACCS).");
-
-        // let v_folded: Vec<Fr> = computed_v_accs
-        // .iter()
-        // .zip(
-        //     computed_v_cccs.iter()
-        //         .map(|x_i| *x_i * rho)
-        //         .collect::<Vec<Fr>>(),
-        // )
-        // .map(|(a_i, b_i)| *a_i + b_i)
-        // .collect();
 
         let accs_folded = Genericfolding::<G1Projective>::fold(
             &vec![accs],
@@ -1086,18 +1103,19 @@ pub mod test {
         let mut rng = test_rng();
 
         // Create a basic CCS circuit
-        let ccs = get_test_ccs::<G1Projective>();
-        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
+        let ccs1 = get_test_ccs::<G1Projective>(5);
+        let ccs2 = get_test_ccs::<G1Projective>(6);
+        let pedersen_params = Pedersen::new_params(&mut rng, ccs1.n - ccs1.l - 1);
 
         // Generate a satisfying witness
-        let z_1 = get_test_z(3);
+        let z_1 = get_test_z(3, 5);
         // Generate another satisfying witness
-        let z_2 = get_test_z(4);
+        let z_2 = get_test_z(4, 6);
 
         // Create the accs instance out of z_1
-        let (running_instance, w1) = ccs.to_accs(&mut rng, &pedersen_params, &z_1);
+        let (running_instance, w1) = ccs1.to_accs(&mut rng, &pedersen_params, &z_1);
         // Create the CCCS instance out of z_2
-        let (new_instance, w2) = ccs.to_cccs(&mut rng, &pedersen_params, &z_2);
+        let (new_instance, w2) = ccs2.to_cccs(&mut rng, &pedersen_params, &z_2);
 
         // Prover's transcript
         let mut transcript_p = IOPTranscript::<Fr>::new(b"genericfolding");
@@ -1134,43 +1152,16 @@ pub mod test {
     /// Test that generates mu>1 and nu>1 instances, and folds them in a single genericfolding step.
     #[test]
     pub fn test_genericfolding_mu_nu_instances() {
-        let mut rng = test_rng();
+        let mu = 10;
+        let nu = 15;
 
-        // Create a basic CCS circuit
-        let ccs = get_test_ccs::<G1Projective>();
-        let pedersen_params = Pedersen::new_params(&mut rng, ccs.n - ccs.l - 1);
+        let test_instances = get_mu_nu_test_instances(mu, nu);
 
-        let mu = 2;
-        let nu = 2;
-
-        // Generate a mu accs & nu CCCS satisfying witness
-        let mut z_accs = Vec::new();
-        for i in 0..mu {
-            let z = get_test_z(i + 3);
-            z_accs.push(z);
-        }
-        let mut z_cccs = Vec::new();
-        for i in 0..nu {
-            let z = get_test_z(nu + i + 3);
-            z_cccs.push(z);
-        }
-
-        // Create the ACCS instances out of z_accs
-        let mut accs_instances = Vec::new();
-        let mut w_accs = Vec::new();
-        for i in 0..mu {
-            let (running_instance, w) = ccs.to_accs(&mut rng, &pedersen_params, &z_accs[i]);
-            accs_instances.push(running_instance);
-            w_accs.push(w);
-        }
-        // Create the CCCS instance out of z_cccs
-        let mut cccs_instances = Vec::new();
-        let mut w_cccs = Vec::new();
-        for i in 0..nu {
-            let (new_instance, w) = ccs.to_cccs(&mut rng, &pedersen_params, &z_cccs[i]);
-            cccs_instances.push(new_instance);
-            w_cccs.push(w);
-        }
+        let accs_instances = test_instances.accs_instances.clone();
+        let cccs_instances = test_instances.cccs_instances.clone();
+        let w_accs = test_instances.w_accs.clone();
+        let w_cccs = test_instances.w_cccs.clone();
+        let pedersen_params = test_instances.pedersen_params.clone();
 
         // Prover's transcript
         let mut transcript_p = IOPTranscript::<Fr>::new(b"genericfolding");

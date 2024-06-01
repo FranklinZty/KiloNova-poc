@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_vec_to_mle() {
-        let z = get_test_z::<Fr>(3);
+        let z = get_test_z::<Fr>(3, 5);
         let n_vars = 3;
         let z_mle = vec_to_mle(n_vars, &z);
 
