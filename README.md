@@ -1,5 +1,5 @@
 # KiloNova
-This is a proof-of-concept implementation of KiloNova. 
+This is a proof-of-concept implementation of KiloNova for academic use. 
 Please do NOT use this in the production environment.
 
 # Introduction
