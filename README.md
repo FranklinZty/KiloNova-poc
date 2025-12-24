@@ -24,6 +24,7 @@ Accumulation Schemes".
 
 ## Asymptotic Complexity
 
+Comparisons of the additional proof size for zk between different PCDs
 | SPS Protocols |                                Protogalaxy | Ours |
 |---------------|-------------------------------------------:|:---|
 | Degree-d gate |          \$O(2^d)\ G + O(d\log m)\ F\$ | \$2G + O(d\log m)\ F\$ |
@@ -35,7 +36,9 @@ Accumulation Schemes".
 _Footnote:_ Assume \$m\$ is the number of accumulated predicate instance-proof pairs, \$d\$ is the maximum degree of relations, and \$\ell\$ is the size of the query set for lookup arguments. F, G represent the cost of field and group operations, respectively.
 
 ## Practical Complexity (simulated)
-Currently, we only implement a simulated R1CS circuit for estimating the size of recursive overhead (especially the NIFS verification cost)..
+Currently, we only implement a simulated R1CS circuit for estimating the size of recursive overhead (especially the NIFS verification cost).
+Note: the baseline is the recursive circuit size of non-ZK-version Nova (constraint number: 11047). Subtracting this baseline number from the simulated result can demonstrate the additional recursive cost for implementing the zero-knowledge property. 
+
 | Steps | Degrees | BCL+21 Constraints | BCL+21 Synthesize Time \(ms\) | ZK\-PCD Constraints | ZK\-PCD Synthesize Time \(ms\) |
 |---:|---:|---:|---:|---:|---:|
 | 1 | 2 | 14577 | 141 | 12139 | 112 |
