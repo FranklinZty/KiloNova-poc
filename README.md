@@ -22,13 +22,14 @@ Accumulation Schemes".
 ## Asymptotic Complexity
 
 | SPS Protocols |                                Protogalaxy | Ours |
-|---|-------------------------------------------:|:---|
-| Degree-\$d\$ gate |          \$O(2^d)\ \GG + O(d\log m)\ \FF\$ | \$2\GG + O(d\log m)\ \FF\$ |
-| Permutation |                  \$4\GG + O(\log m)\ \FF\$ | \$2\GG + O(\log m)\ \FF\$ |
-| Lookup | \$(4\ell+2)\ \GG + O(\log m + \ell)\ \FF\$ | \$3\GG + O(\log (m+\ell))\ \FF\$ |
-| R1CS |                  \$7\GG + O(\log m)\ \FF\$ | \$2\GG + O(\log m)\ \FF\$ |
-| CCS |          \$O(2^d)\ \GG + O(d\log m)\ \FF\$ | \$2\GG + O(d\log m)\ \FF\$ |
-_Footnote:_ Assume \$m\$ is the number of accumulated predicate instance-proof pairs, \$d\$ is the maximum degree of relations, and \$\ell\$ is the size of the query set for lookup arguments.
+|---------------|-------------------------------------------:|:---|
+| Degree-d gate |          \$O(2^d)\ G + O(d\log m)\ F\$ | \$2G + O(d\log m)\ F\$ |
+| Permutation   |                  \$4G + O(\log m)\ F\$ | \$2G + O(\log m)\ F\$ |
+| Lookup        | \$(4\ell+2)\ G + O(\log m + \ell)\ F\$ | \$3G + O(\log (m+\ell))\ F\$ |
+| R1CS          |                  \$7G + O(\log m)\ F\$ | \$2G + O(\log m)\ F\$ |
+| CCS           |          \$O(2^d)\ G + O(d\log m)\ F\$ | \$2G + O(d\log m)\ F\$ |
+
+_Footnote:_ Assume \$m\$ is the number of accumulated predicate instance-proof pairs, \$d\$ is the maximum degree of relations, and \$\ell\$ is the size of the query set for lookup arguments. F, G represent the cost of field and group operations, respectively.
 
 ## Practical Complexity (simulated)
 Currently, we only implement a simulated R1CS circuit for estimating the size of recursive overhead (especially the NIFS verification cost)..
@@ -53,5 +54,6 @@ cargo run
 ```
 
 ## Reference
-Kothapalli, Abhiram, Srinath Setty, and Ioanna Tzialla. "Nova: Recursive zero-knowledge arguments from folding schemes." Annual International Cryptology Conference. Cham: Springer Nature Switzerland, 2022.
-Eagen, Liam, and Ariel Gabizon. "Protogalaxy: Efficient protostar-style folding of multiple instances." Cryptology ePrint Archive (2023).
+[1] Kothapalli, Abhiram, Srinath Setty, and Ioanna Tzialla. "Nova: Recursive zero-knowledge arguments from folding schemes." Annual International Cryptology Conference. Cham: Springer Nature Switzerland, 2022.
+
+[2] Eagen, Liam, and Ariel Gabizon. "Protogalaxy: Efficient protostar-style folding of multiple instances." Cryptology ePrint Archive (2023).
