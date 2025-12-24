@@ -5,7 +5,7 @@
   <a href="https://img.shields.io/badge/status-proof--of--concept-orange"><img src="https://img.shields.io/badge/status-proof--of--concept-orange.svg"></a>
 </p>
 
-<p align="center">A Rust implementation of Zero\-Knowledge Proof\-Carrying Data (PCD): modular, transparent, and recursive-ready</p>
+<p align="center">A Rust implementation of Zero\-Knowledge Proof\-Carrying Data (PCD): modular, efficient and recursive-friendly </p>
 
 ## About
 **zk\-PCD** is a new theoretical and practical improvements for zero-knowledge Proof-Carrying Data.
