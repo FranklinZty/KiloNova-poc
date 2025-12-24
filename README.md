@@ -20,7 +20,7 @@ Accumulation Schemes".
 - **High Efficiency**: we present a concrete design for an eligible accumulation scheme for special sound protocol.
 - **Pluggable Backends**: abstract interface to integrate multiple curve engines (e.g., Pasta, Bn256, Secp256k1).
 
-![New Zero-Knowledge Proof-Carrying Data Construction](./doc/ZK-PCD.png)
+<img src="./doc/ZK-PCD.png" alt="New Zero-Knowledge Proof-Carrying Data Construction" width="60%" />
 
 ## Asymptotic Complexity
 
