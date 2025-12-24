@@ -1,0 +1,37 @@
+//! This library implements Nova, a high-speed recursive SNARK.
+#![deny(
+  warnings,
+  unused,
+  future_incompatible,
+  nonstandard_style,
+  rust_2018_idioms,
+)]
+#![allow(non_snake_case)]
+#![forbid(unsafe_code)]
+
+// main APIs exposed by this library
+pub mod nova;
+
+#[cfg(feature = "experimental")]
+pub mod neutron;
+
+// public modules
+pub mod errors;
+pub mod frontend;
+pub mod gadgets;
+pub mod provider;
+pub mod spartan;
+pub mod traits;
+pub mod r1cs;
+
+// private modules
+pub mod constants;
+pub mod digest;
+
+use traits::{commitment::CommitmentEngineTrait, Engine};
+
+// some type aliases
+type CommitmentKey<E> = <<E as Engine>::CE as CommitmentEngineTrait<E>>::CommitmentKey;
+type DerandKey<E> = <<E as Engine>::CE as CommitmentEngineTrait<E>>::DerandKey;
+type Commitment<E> = <<E as Engine>::CE as CommitmentEngineTrait<E>>::Commitment;
+type CE<E> = <E as Engine>::CE;
