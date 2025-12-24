@@ -33,7 +33,7 @@ _Footnote:_ Assume \$m\$ is the number of accumulated predicate instance-proof p
 
 ## Practical Complexity (simulated)
 Currently, we only implement a simulated R1CS circuit for estimating the size of recursive overhead (especially the NIFS verification cost)..
-| Steps | Degrees | BCL+21 Constraints | BCL+21 Time \(ms\) | ZK\-PCD Constraints | ZK\-PCD Time \(ms\) |
+| Steps | Degrees | BCL+21 Constraints | BCL+21 Synthesize Time \(ms\) | ZK\-PCD Constraints | ZK\-PCD Synthesize Time \(ms\) |
 |---:|---:|---:|---:|---:|---:|
 | 1 | 2 | 14577 | 141 | 12139 | 112 |
 | 1 | 3 | 19459 | 171 | 12145 | 115 |
