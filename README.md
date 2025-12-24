@@ -8,6 +8,7 @@
 <p align="center">A Rust implementation of Zero\-Knowledge Proof-Carrying Data (PCD): modular, efficient and recursive-friendly </p>
 
 ## About
+
 **zk\-PCD** is a new theoretical and practical improvements for zero-knowledge Proof-Carrying Data.
 This repository is a proof-of-concept implementation for validating the performance improvements claimed in the paper "Zero-Knowledge Proof-Carrying Data from
 Accumulation Schemes".
@@ -18,6 +19,8 @@ Accumulation Schemes".
 - **New Construction**: we propose a new zero-knowledge PCD construction that directly avoids the requirement of a zero-knowledge NARK component.
 - **High Efficiency**: we present a concrete design for an eligible accumulation scheme for special sound protocol.
 - **Pluggable Backends**: abstract interface to integrate multiple curve engines (e.g., Pasta, Bn256, Secp256k1).
+
+![New Zero-Knowledge Proof-Carrying Data Construction](./doc/ZK-PCD.png)
 
 ## Asymptotic Complexity
 
