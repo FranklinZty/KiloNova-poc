@@ -51,7 +51,7 @@ Currently, we only implement a simulated R1CS circuit for estimating the size of
 ## Installation
 
 ```bash
-git clone this repo
+git clone [this repo](https://anonymous.4open.science/r/zk-PCD-B3FF/)
 cd zk-pcd
 cargo run
 ```
