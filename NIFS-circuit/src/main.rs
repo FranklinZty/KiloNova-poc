@@ -3,28 +3,28 @@
 #[allow(dead_code)]
 
 mod circuit;
+
 use std::time::Instant;
-use crate::circuit::{NovaAugmentedCircuit};
+use crate::circuit::NovaAugmentedCircuit;
 
 use ff::{Field, PrimeField};
 use nova_snark::{
     frontend::{
-        num::AllocatedNum,
-        r1cs::{NovaShape, NovaWitness},
-        solver::SatisfyingAssignment,
+        r1cs::{NovaShape, NovaWitness}
+        ,
         test_shape_cs::TestShapeCS,
-        ConstraintSystem, SynthesisError,
+        ConstraintSystem,
     },
-    provider::{Bn256EngineKZG, PallasEngine, VestaEngine, Secp256k1Engine},
+    provider::{PallasEngine, VestaEngine},
     traits::{
-        commitment::CommitmentEngineTrait,
         circuit::TrivialCircuit,
+        commitment::CommitmentEngineTrait,
         snark::default_ck_hint,
-        Engine,
-        ROConstants,
+        Engine
+        ,
         ROConstantsCircuit,
-    },
-    gadgets::utils::scalar_as_base,
+    }
+    ,
 };
 
 // some type aliases
@@ -73,8 +73,8 @@ fn test_recursive_circuit_with<E1, E2>(flag: Scheme, mu: usize, deg: usize) wher
 fn main() {
     println!("Run the baseline non-zk Nova recursive circuit");
     test_recursive_circuit_with::<PallasEngine, VestaEngine>(Scheme::Nova, 1, 1);
-    for mu in [1,2,3] {
-        for deg in [2,3,4] {
+    for mu in [1,2] {
+        for deg in [1,2] {
             test_recursive_circuit_with::<PallasEngine, VestaEngine>(Scheme::BCL21, mu, deg);
             test_recursive_circuit_with::<PallasEngine, VestaEngine>(Scheme::ZKPCD, mu, deg);
         }

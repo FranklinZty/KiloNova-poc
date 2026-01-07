@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 nova-snark = {path = "../Nova"}
+subroutines = {git="https://github.com/EspressoSystems/hyperplonk"}
+transcript = {git="https://github.com/EspressoSystems/hyperplonk"}
+
 ff = { version = "0.13.0", features = ["derive"] }
 digest = "0.10"
 sha3 = "0.10"
@@ -28,3 +31,11 @@ itertools = "0.14.0"
 proptest = "1.9.0"
 rand = "0.8.5"
 num = "0.4.3"
+
+# arkworks dependencies
+ark-ff = { version = "^0.4.0", default-features = false }
+ark-poly = { version = "^0.4.0", default-features = false }
+ark-std = { version = "^0.4.0", default-features = false }
+ark-bls12-381 = { version = "0.4.0", default-features = false, features = [ "curve" ] }
+ark-serialize =  { version = "^0.4.0", default-features = false }
+secp256k1 = "0.32.0-beta.2"

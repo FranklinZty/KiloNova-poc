@@ -1,4 +1,6 @@
 //! This module implements various gadgets necessary for folding R1CS types.
+
+use std::ops::{Mul, Sub};
 use nova_snark::{
     constants::{BN_LIMB_WIDTH, BN_N_LIMBS, NUM_CHALLENGE_BITS},
     frontend::{num::AllocatedNum, Assignment, Boolean, ConstraintSystem, SynthesisError},
@@ -15,9 +17,16 @@ use nova_snark::{
             conditionally_select_bignat, le_bits_to_num,
         },
     },
+    spartan::{
+        sumcheck::*,
+        polys::multilinear::MultilinearPolynomial,
+        polys::eq::EqPolynomial,
+    }
 };
 use ff::Field;
 use num_traits::pow;
+use nova_snark::errors::NovaError;
+use nova_snark::traits::TranscriptEngineTrait;
 
 /// An Allocated R1CS Instance
 #[derive(Clone)]
@@ -389,6 +398,82 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         })
     }
 
+    pub fn sumcheck_cubic_three_inputs() -> Result<(), NovaError> {
+
+        let evals_a = vec![
+            E::Scalar::from(1u64), // x=(0,0)
+            E::Scalar::from(3u64), // x=(1,0)
+            E::Scalar::from(5u64), // x=(0,1)
+            E::Scalar::from(7u64), // x=(1,1)
+        ];
+        let evals_b = vec![
+            E::Scalar::from(2u64),
+            E::Scalar::from(4u64),
+            E::Scalar::from(6u64),
+            E::Scalar::from(8u64),
+        ];
+        let evals_c = vec![
+            E::Scalar::from(2u64),
+            E::Scalar::from(12u64),
+            E::Scalar::from(30u64),
+            E::Scalar::from(56u64),
+        ];
+
+        let mut poly_a = MultilinearPolynomial::new(evals_a);
+        let mut poly_b = MultilinearPolynomial::new(evals_b);
+        let mut poly_c = MultilinearPolynomial::new(evals_c);
+
+        let taus: Vec<E::Scalar> = vec![
+            E::Scalar::from(1u64),
+            E::Scalar::from(2u64),
+        ];
+
+        let mut poly_abc = poly_a.clone().mul(poly_b.clone()).unwrap();
+        poly_abc = poly_abc.sub(poly_c.clone()).unwrap();
+        let claim = poly_abc.evaluate(&taus);
+
+        let mut prover_transcript = <<E as Engine>::TE as TranscriptEngineTrait<E>>::new(b"sumcheck_test");
+        let (proof, _r_vec, final_evals) = SumcheckProof::<E>::prove_cubic_with_three_inputs(
+            &claim,
+            taus.clone(),
+            &mut poly_a,
+            &mut poly_b,
+            &mut poly_c,
+            &mut prover_transcript,
+        )?;
+
+        // construct verifier transcript using fully-qualified associated type to avoid ambiguity
+        let mut verifier_transcript = <<E as Engine>::TE as TranscriptEngineTrait<E>>::new(b"sumcheck_test");
+
+        // --- sumcheck verification (mirrors the snippet provided) ---
+        // number of rounds for the sumcheck (use same as taus length here)
+        let num_rounds = taus.len();
+
+        let tau = EqPolynomial::new(taus);
+
+        // verify the sumcheck proof (claim = 0, degree bound = 3)
+        let (claim_finals, r_vec) = proof.verify(E::Scalar::ZERO, num_rounds, 3, &mut verifier_transcript)?;
+
+        // derive expected claim from the proven inner claims
+        let (claim_a, claim_b, claim_c) = (final_evals[0], final_evals[1], final_evals[2]);
+        let eval_E = E::Scalar::ZERO; // in this test we don't have an extra E term
+        let u_u = E::Scalar::ONE; // treat U.u as 1 for this simple test
+
+        let taus_bound = tau.evaluate(&r_vec);
+        let claim_final_expected =
+            taus_bound * (claim_a * claim_b - u_u * claim_c - eval_E);
+
+        if claim_finals != claim_final_expected {
+
+            return Err(NovaError::InvalidSumcheckProof);
+        }
+
+        println!("Execute Sumcheck.");
+        Ok(())
+    }
+    // TODO: separate the prove and verify
+    // TODO: write the constraints for verify part
+
     pub fn fold_with_r1cs_zkpcd<CS: ConstraintSystem<<E as Engine>::Base>>(
         &self,
         mut cs: CS,
@@ -399,6 +484,8 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         c: &Vec<Vec<AllocatedNum<E::Base>>>,
         ro_consts: ROConstantsCircuit<E>,
     ) -> Result<AllocatedRelaxedR1CSInstance<E>, SynthesisError> {
+        Self::sumcheck_cubic_three_inputs().unwrap();
+
         // Compute r:
         let mut ro = E::ROCircuit::new(ro_consts);
         ro.absorb(params);
