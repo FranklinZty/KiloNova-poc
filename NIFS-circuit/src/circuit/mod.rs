@@ -4,9 +4,9 @@
 //! of the running instances. Each of these hashes is H(params = H(shape, ck), i, z0, zi, U).
 //! Each circuit folds the last invocation of the other into the running instance
 
-mod r1cs;
+pub mod r1cs;
 use r1cs::{AllocatedR1CSInstance, AllocatedRelaxedR1CSInstance};
-
+use nova_snark::spartan::polys::univariate::CompressedUniPoly;
 use crate::{Commitment, Scheme};
 
 use nova_snark::{
@@ -27,6 +27,7 @@ use nova_snark::{
 };
 use ff::Field;
 use serde::{Deserialize, Serialize};
+use nova_snark::spartan::polys::univariate::UniPoly;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -42,6 +43,9 @@ pub struct NovaAugmentedCircuitInputs<E: Engine> {
     T: Option<Commitment<E>>,
     S: Option<Commitment<E>>,
     c: Option<Vec<E::Base>>,
+    polys: Option<Vec<CompressedUniPoly<E::Base>>>,
+    taus: Option<Vec<E::Base>>,
+    evals: Option<Vec<E::Base>>,
 }
 
 impl<E: Engine> NovaAugmentedCircuitInputs<E> {
@@ -58,6 +62,9 @@ impl<E: Engine> NovaAugmentedCircuitInputs<E> {
         T: Option<Commitment<E>>,
         S: Option<Commitment<E>>,
         c: Option<Vec<E::Base>>,
+        polys: Option<Vec<CompressedUniPoly<E::Base>>>,
+        taus: Option<Vec<E::Base>>,
+        evals: Option<Vec<E::Base>>,
     ) -> Self {
         Self {
             pp_digest,
@@ -71,6 +78,9 @@ impl<E: Engine> NovaAugmentedCircuitInputs<E> {
             T,
             S,
             c,
+            polys,
+            taus,
+            evals,
         }
     }
 }
@@ -129,6 +139,9 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
             AllocatedPoint<E>,
             AllocatedPoint<E>,
             Vec<Vec<AllocatedNum<E::Base>>>,
+            Vec<Vec<AllocatedNum<E::Base>>>,
+            Vec<AllocatedNum<E::Base>>,
+            Vec<AllocatedNum<E::Base>>,
         ),
         SynthesisError,
     > {
@@ -213,8 +226,43 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
             })
             .collect::<Result<Vec<Vec<AllocatedNum<E::Base>>>, _>>()?;
 
-        Ok((pp_digest, i, z_0, z_i, U, r_i, r_next, u, T, S, c))
+        let compressed_polys = self.inputs.get()?.polys.as_ref().ok_or(SynthesisError::AssignmentMissing)?;
+        let mut claim_finals = E::Base::ZERO;
+        let mut polys: Vec<Vec<AllocatedNum<E::Base>>> = Vec::new();
+        for i in 0..compressed_polys.len() {
+            let poly = compressed_polys[i].decompress(&claim_finals);
+            let poly_temp: Vec<AllocatedNum<E::Base>> = (0..poly.degree()+1)
+                .map(|j| {
+                    AllocatedNum::alloc(cs.namespace(|| format!("poly_{i}_{j}")), || {
+                        Ok(poly.coeffs[j])
+                    })
+                })
+                .collect::<Result<Vec<AllocatedNum<E::Base>>, _>>()?;
+            polys.push(poly_temp);
+        }
+
+        let taus = self.inputs.get()?.taus.as_ref().ok_or(SynthesisError::AssignmentMissing)?;
+        let taus_alloc: Vec<AllocatedNum<E::Base>> = (0..taus.len())
+            .map(|j| {
+                AllocatedNum::alloc(cs.namespace(|| format!("tau_{j}")), || {
+                    Ok(taus[j])
+                })
+            })
+            .collect::<Result<Vec<AllocatedNum<E::Base>>, _>>()?;
+
+        let evals = self.inputs.get()?.evals.as_ref().ok_or(SynthesisError::AssignmentMissing)?;
+        let evals_alloc: Vec<AllocatedNum<E::Base>> = (0..evals.len())
+            .map(|j| {
+                AllocatedNum::alloc(cs.namespace(|| format!("eval_{j}")), || {
+                    Ok(evals[j])
+                })
+            })
+            .collect::<Result<Vec<AllocatedNum<E::Base>>, _>>()?;
+
+        Ok((pp_digest, i, z_0, z_i, U, r_i, r_next, u, T, S, c, polys, taus_alloc, evals_alloc))
     }
+
+
 
     fn synthesize_hash_check<CS: ConstraintSystem<E::Base>>(
         &self,
@@ -266,6 +314,9 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
         T: &AllocatedPoint<E>,
         S: &AllocatedPoint<E>,
         c: &Vec<Vec<AllocatedNum<E::Base>>>,
+        polys: &Vec<Vec<AllocatedNum<E::Base>>>,
+        taus: &Vec<AllocatedNum<E::Base>>,
+        evals: &Vec<AllocatedNum<E::Base>>,
     ) -> Result<AllocatedRelaxedR1CSInstance<E>, SynthesisError> {
         // Run NIFS Verifier
         let mut U_fold;
@@ -278,6 +329,7 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
                     T,
                     S,
                     c,
+                    self.deg.clone(),
                     self.ro_consts.clone(),
                 )?;
             },
@@ -288,7 +340,10 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
                     u,
                     T,
                     S,
-                    c,
+                    polys,
+                    taus,
+                    evals,
+                    self.deg.clone(),
                     self.ro_consts.clone(),
                 )?;
             },
@@ -299,7 +354,10 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
                     u,
                     T,
                     S,
-                    c,
+                    polys,
+                    taus,
+                    evals,
+                    self.deg.clone(),
                     self.ro_consts.clone(),
                 )?;
             }
@@ -330,6 +388,9 @@ impl<E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'_, E, SC> {
             T,
             S,
             c,
+            polys,
+            taus,
+            evals
         ) = self.alloc_witness(cs.namespace(|| "allocate the circuit witness"), arity, self.mu, self.deg)?;
 
         // Set variable indicating if this is the base case as false permanently to test NIFS verifier
@@ -368,6 +429,9 @@ impl<E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'_, E, SC> {
             &T,
             &S,
             &c,
+            &polys,
+            &taus,
+            &evals,
         )?;
 
         // Either check_non_base_pass=true or we are in the base case

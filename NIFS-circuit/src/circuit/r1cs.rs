@@ -25,8 +25,11 @@ use nova_snark::{
 };
 use ff::Field;
 use num_traits::pow;
+use rand_core::RngCore;
 use nova_snark::errors::NovaError;
+use nova_snark::spartan::polys::univariate::CompressedUniPoly;
 use nova_snark::traits::TranscriptEngineTrait;
+use rand_core::OsRng;
 
 /// An Allocated R1CS Instance
 #[derive(Clone)]
@@ -211,7 +214,10 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         u: &AllocatedR1CSInstance<E>,
         T: &AllocatedPoint<E>,
         S: &AllocatedPoint<E>,
-        c: &Vec<Vec<AllocatedNum<E::Base>>>,
+        compressed_polys: &Vec<Vec<AllocatedNum<E::Base>>>,
+        taus: &Vec<AllocatedNum<E::Base>>,
+        final_evals: &Vec<AllocatedNum<E::Base>>,
+        deg: usize,
         ro_consts: ROConstantsCircuit<E>,
     ) -> Result<AllocatedRelaxedR1CSInstance<E>, SynthesisError> {
         // Compute r:
@@ -236,7 +242,6 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         let W_fold = self.W.add(cs.namespace(|| "self.W + r * u.W"), &rW)?;
 
         // R_fold = self.R + r*S + r^2*S + ... + r^{n-1}*S
-        let deg = c[0].len();
         let rS = S.scalar_mul(cs.namespace(|| "r * S"), &r_bits)?;
         // let R_fold = self.R + r*S
         let mut R_fold = self.R.add(cs.namespace(|| "self.R + rS"), &rS)?;
@@ -252,79 +257,9 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         }
 
         // Compute the Sumcheck Verification
-        let mut c_fold = alloc_zero(cs.namespace(|| "zero"));
-        let mut one = alloc_one(cs.namespace(||  format!("one")));;
-        for i in 0..c.len() {
-            let r_bits_i = ro.squeeze(cs.namespace(|| format!("r bits^{i}")), NUM_CHALLENGE_BITS)?;
-            let r_i = le_bits_to_num(cs.namespace(|| format!("r^{i}")), &r_bits_i)?;
-            let mut basis = alloc_one(cs.namespace(||  format!("basis^{i}_one")));;
-            for (j, c_ij) in c[i].iter().enumerate() {
-                let r_i_c_ij = AllocatedNum::alloc(cs.namespace(|| format!("r^{i} - c^{i}^{j}")), || {
-                    Ok(*r_i.get_value().get()? * c_ij.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce r^{i} - c^{i}^{j} = r_i_c_{i}_{j}"),
-                    |lc| lc + r_i.get_variable() - c_ij.get_variable(),
-                    |lc| lc,
-                    |lc| lc + r_i_c_ij.get_variable(),
-                );
-                // compute the inversion of r_i_c_ij
-                let r_i_c_ij_inv = AllocatedNum::alloc(cs.namespace(|| format!("r_{i}_c_ij_inv_{j}")), || {
-                    Ok(r_i_c_ij.get_value().get()?.invert().unwrap_or(E::Base::ZERO))
-                })?;
-                // enforce r_i_c * r_i_c_inv = 1
-                cs.enforce(
-                    || format!("enforce inv_{i}_{j}"),
-                    |lc| lc + r_i_c_ij.get_variable(),
-                    |lc| lc + r_i_c_ij_inv.get_variable(),
-                    |lc| lc + one.get_variable(),
-                );
-                let prev_basis = basis.clone();
-                basis = AllocatedNum::alloc(cs.namespace(|| format!("basis * (r^{i} - c^{i}^{j})")), || {
-                    Ok(*basis.get_value().get()? * r_i_c_ij_inv.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce basis_update_{i}_{j}"),
-                    |lc| lc + prev_basis.get_variable(),
-                    |lc| lc + r_i_c_ij_inv.get_variable(),
-                    |lc| lc + basis.get_variable(),
-                );
-            }
-            for j in 0..c[i].len() {
-                let basis_inv = AllocatedNum::alloc(cs.namespace(|| format!("basis_inv^{i}^{j}")), || {
-                    Ok(basis.get_value().get()?.invert().unwrap_or(E::Base::ZERO))
-                })?;
-                cs.enforce(
-                    || format!("enforce basis inv_{i}_{j}"),
-                    |lc| lc + basis.get_variable(),
-                    |lc| lc + basis_inv.get_variable(),
-                    |lc| lc + one.get_variable(),
-                );
-                // compute c[i][j]/basis
-                let c_ij = AllocatedNum::alloc(cs.namespace(|| format!("c^{i}^{j} * basis_inv")), || {
-                    Ok(*c[i][j].get_value().get()? * basis_inv.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce c_{i}_{j} = c[i][j] * basis_inv"),
-                    |lc| lc + c[i][j].get_variable(),
-                    |lc| lc + basis_inv.get_variable(),
-                    |lc| lc + c_ij.get_variable(),
-                );
-
-                // accumulate to c_fold
-                let c_fold_prev = c_fold.clone();
-                c_fold = AllocatedNum::alloc(cs.namespace(|| format!("c_fold + c^{i}^{j}")), || {
-                    Ok(*c_fold.get_value().get()? + c_ij.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce c_fold_update_{i}_{j}"),
-                    |lc| lc + c_fold_prev.get_variable(),
-                    |lc| lc + c_ij.get_variable(),
-                    |lc| lc + c_fold.get_variable(),
-                );
-                ro.absorb(&c[i][j]);
-            }
-        }
+        let mut eval_e = alloc_zero(cs.namespace(|| "zero"));
+        let mut u_u = alloc_one(cs.namespace(|| "one"));;
+        Self::sumcheck_verify(&mut cs, ro,3, compressed_polys, taus, final_evals, eval_e, u_u).unwrap();
 
         // E_fold = self.E + r * T
         let rT = T.scalar_mul(cs.namespace(|| "r * T"), &r_bits)?;
@@ -398,81 +333,136 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         })
     }
 
-    pub fn sumcheck_cubic_three_inputs() -> Result<(), NovaError> {
-
-        let evals_a = vec![
-            E::Scalar::from(1u64), // x=(0,0)
-            E::Scalar::from(3u64), // x=(1,0)
-            E::Scalar::from(5u64), // x=(0,1)
-            E::Scalar::from(7u64), // x=(1,1)
-        ];
-        let evals_b = vec![
-            E::Scalar::from(2u64),
-            E::Scalar::from(4u64),
-            E::Scalar::from(6u64),
-            E::Scalar::from(8u64),
-        ];
-        let evals_c = vec![
-            E::Scalar::from(2u64),
-            E::Scalar::from(12u64),
-            E::Scalar::from(30u64),
-            E::Scalar::from(56u64),
-        ];
-
-        let mut poly_a = MultilinearPolynomial::new(evals_a);
-        let mut poly_b = MultilinearPolynomial::new(evals_b);
-        let mut poly_c = MultilinearPolynomial::new(evals_c);
-
-        let taus: Vec<E::Scalar> = vec![
-            E::Scalar::from(1u64),
-            E::Scalar::from(2u64),
-        ];
-
-        let mut poly_abc = poly_a.clone().mul(poly_b.clone()).unwrap();
-        poly_abc = poly_abc.sub(poly_c.clone()).unwrap();
-        let claim = poly_abc.evaluate(&taus);
-
-        let mut prover_transcript = <<E as Engine>::TE as TranscriptEngineTrait<E>>::new(b"sumcheck_test");
-        let (proof, _r_vec, final_evals) = SumcheckProof::<E>::prove_cubic_with_three_inputs(
-            &claim,
-            taus.clone(),
-            &mut poly_a,
-            &mut poly_b,
-            &mut poly_c,
-            &mut prover_transcript,
-        )?;
-
-        // construct verifier transcript using fully-qualified associated type to avoid ambiguity
-        let mut verifier_transcript = <<E as Engine>::TE as TranscriptEngineTrait<E>>::new(b"sumcheck_test");
-
+    pub fn sumcheck_verify<CS: ConstraintSystem<<E as Engine>::Base>>(
+        mut cs: CS,
+        mut ro: E::ROCircuit,
+        degree_bound: usize,
+        polys: &Vec<Vec<AllocatedNum<E::Base>>>,
+        taus: &Vec<AllocatedNum<E::Base>>,
+        evals: &Vec<AllocatedNum<E::Base>>,
+        eval_e: AllocatedNum<E::Base>,
+        u_u: AllocatedNum<E::Base>
+    ) -> Result<(), NovaError> {
         // --- sumcheck verification (mirrors the snippet provided) ---
         // number of rounds for the sumcheck (use same as taus length here)
         let num_rounds = taus.len();
 
-        let tau = EqPolynomial::new(taus);
-
         // verify the sumcheck proof (claim = 0, degree bound = 3)
-        let (claim_finals, r_vec) = proof.verify(E::Scalar::ZERO, num_rounds, 3, &mut verifier_transcript)?;
+        let mut r_vec_value: Vec<E::Base> = Vec::new(); // the challenge vector (values)
+        let mut r_vec: Vec<AllocatedNum<E::Base>> = Vec::new(); // the challenge vector'
+        let mut claim_finals = alloc_zero(cs.namespace(|| "claim_final"));
 
-        // derive expected claim from the proven inner claims
-        let (claim_a, claim_b, claim_c) = (final_evals[0], final_evals[1], final_evals[2]);
-        let eval_E = E::Scalar::ZERO; // in this test we don't have an extra E term
-        let u_u = E::Scalar::ONE; // treat U.u as 1 for this simple test
-
-        let taus_bound = tau.evaluate(&r_vec);
-        let claim_final_expected =
-            taus_bound * (claim_a * claim_b - u_u * claim_c - eval_E);
-
-        if claim_finals != claim_final_expected {
-
+        // verify that there is a univariate polynomial for each round
+        if polys.len() != num_rounds {
             return Err(NovaError::InvalidSumcheckProof);
         }
 
-        println!("Execute Sumcheck.");
+        let mut one = alloc_one(cs.namespace(|| format!("eq_one")));
+        let mut eq_tau = alloc_zero(cs.namespace(|| format!("eq_tau")));
+
+        for i in 0..polys.len() {
+            // verify degree bound
+            if polys[i].len() != degree_bound+1 {
+                return Err(NovaError::InvalidSumcheckProof);
+            }
+
+            // append the prover's message to the transcript
+            for j in 0..polys[i].len() {
+                ro.absorb(&polys[i][j]);
+            }
+
+            //derive the verifier's challenge for the next round
+            let r_bits = ro.squeeze(cs.namespace(|| format!("r_{i} bits")), NUM_CHALLENGE_BITS)?;
+            let r_i = le_bits_to_num(cs.namespace(|| format!("r_{i}")), &r_bits)?;
+
+            // evaluate the claimed degree-ell polynomial at r_i
+            let mut r_term = alloc_one(cs.namespace(|| format!("r_term_{i}")));;
+            for j in 0..polys[i].len() {
+                let r_term_prev = r_term.clone();
+                if j > 0 {
+                    r_term = AllocatedNum::alloc(cs.namespace(|| format!("r_term_{i}_{j}")), || {
+                        Ok(*r_term_prev.get_value().get()? * r_i.get_value().get()?)
+                    })?;
+                    cs.enforce(
+                        || format!("enforce r_term_update_{i}_{j}"),
+                        |lc| lc + r_i.get_variable(),
+                        |lc| lc + r_term_prev.get_variable(),
+                        |lc| lc + r_term.get_variable(),
+                    );
+                }
+                let claim_finals_prev = claim_finals.clone();
+                claim_finals = AllocatedNum::alloc(cs.namespace(|| format!("claim_final_{i}_{j}")), || {
+                    Ok(*claim_finals_prev.get_value().get()? + *r_term.get_value().get()? * polys[i][j].get_value().get()?)
+                })?;
+                cs.enforce(
+                    || format!("enforce claim_final_update_{i}_{j}"),
+                    |lc| lc + r_term.get_variable(),
+                    |lc| lc + polys[i][j].get_variable(),
+                    |lc| lc + claim_finals.get_variable() - claim_finals_prev.get_variable(),
+                );
+            }
+
+            // evaluate eq_tau on r_vec
+            let eq_tau_prev = eq_tau.clone();
+            let eq_tau_L = AllocatedNum::alloc(cs.namespace(|| format!("eq_tau_L_{i}")), || {
+                Ok(*taus[i].get_value().get()? * r_i.get_value().get()?)
+            })?;
+            cs.enforce(
+                || format!("enforce eq_tau_L_{i}"),
+                |lc| lc + taus[i].get_variable(),
+                |lc| lc + r_i.get_variable(),
+                |lc| lc + eq_tau_L.get_variable(),
+            );
+            let eq_tau_R = AllocatedNum::alloc(cs.namespace(|| format!("eq_tau_R_{i}")), || {
+                Ok((*one.get_value().get()? - taus[i].get_value().get()?) * (*one.get_value().get()? - r_i.get_value().get()?))
+            })?;
+            cs.enforce(
+                || format!("enforce eq_tau_R_{i}"),
+                |lc| lc + one.get_variable() - taus[i].get_variable(),
+                |lc| lc + one.get_variable() - r_i.get_variable(),
+                |lc| lc + eq_tau_R.get_variable(),
+            );
+            eq_tau = AllocatedNum::alloc(cs.namespace(|| format!("eq_tau_{i}")), || {
+                Ok(*eq_tau_prev.get_value().get()? * (*eq_tau_L.get_value().get()? + eq_tau_R.get_value().get()?))
+            })?;
+            cs.enforce(
+                || format!("enforce eq_tau_update_{i}"),
+                |lc| lc + eq_tau_prev.get_variable(),
+                |lc| lc + eq_tau_L.get_variable() + eq_tau_R.get_variable(),
+                |lc| lc + eq_tau.get_variable(),
+            );
+        }
+
+        let eval_ab = AllocatedNum::alloc(cs.namespace(|| format!("eval_ab")), || {
+            Ok(*evals[0].get_value().get()? * evals[1].get_value().get()?)
+        })?;
+        cs.enforce(
+            || format!("enforce eval_ab"),
+            |lc| lc + evals[0].get_variable(),
+            |lc| lc + evals[1].get_variable(),
+            |lc| lc + eval_ab.get_variable(),
+        );
+        let eval_uc = AllocatedNum::alloc(cs.namespace(|| format!("eval_uc")), || {
+            Ok(*u_u.get_value().get()? * evals[2].get_value().get()?)
+        })?;
+        cs.enforce(
+            || format!("enforce eval_uc"),
+            |lc| lc + u_u.get_variable(),
+            |lc| lc + evals[2].get_variable(),
+            |lc| lc + eval_uc.get_variable(),
+        );
+        let claim_final_expected = AllocatedNum::<E::Base>::alloc(cs.namespace(|| "claim_final_expected"), || {
+            Ok(*eq_tau.get_value().get()? * (*eval_ab.get_value().get()? - eval_uc.get_value().get()? - eval_e.get_value().get()?))
+        })?;
+        cs.enforce(
+            || format!("enforce claim_final_expected"),
+            |lc| lc + eq_tau.get_variable(),
+            |lc| lc + eval_ab.get_variable() - eval_uc.get_variable() - eval_e.get_variable(),
+            |lc| lc + claim_finals.get_variable(),
+        );
+
         Ok(())
     }
-    // TODO: separate the prove and verify
-    // TODO: write the constraints for verify part
 
     pub fn fold_with_r1cs_zkpcd<CS: ConstraintSystem<<E as Engine>::Base>>(
         &self,
@@ -481,11 +471,12 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         u: &AllocatedR1CSInstance<E>,
         T: &AllocatedPoint<E>,
         S: &AllocatedPoint<E>,
-        c: &Vec<Vec<AllocatedNum<E::Base>>>,
+        compressed_polys: &Vec<Vec<AllocatedNum<E::Base>>>,
+        taus: &Vec<AllocatedNum<E::Base>>,
+        final_evals: &Vec<AllocatedNum<E::Base>>,
+        deg: usize,
         ro_consts: ROConstantsCircuit<E>,
     ) -> Result<AllocatedRelaxedR1CSInstance<E>, SynthesisError> {
-        Self::sumcheck_cubic_three_inputs().unwrap();
-
         // Compute r:
         let mut ro = E::ROCircuit::new(ro_consts);
         ro.absorb(params);
@@ -508,95 +499,14 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         let W_fold = self.W.add(cs.namespace(|| "self.W + r * u.W"), &rW)?;
 
         // R_fold = self.R + r*S + r^2*S + ... + r^{n-1}*S
-        let deg = c[0].len();
         let rS = S.scalar_mul(cs.namespace(|| "r * S"), &r_bits)?;
         // let R_fold = self.R + r*S
         let mut R_fold = self.R.add(cs.namespace(|| "self.R + rS"), &rS)?;
-        // if deg > 1 {
-        //     let mut r_power_S = rS;
-        //     // For loop for computing r^2*S, r^3*S, ..., r^{n-1}*S
-        //     for i in 2..pow(2,deg) {
-        //         // compute the next r^i * S
-        //         r_power_S = r_power_S.scalar_mul(cs.namespace(|| format!("r^{} * S", i)), &r_bits)?;
-        //         // accumulate to R_fold
-        //         R_fold = R_fold.add(cs.namespace(|| format!("R_fold + r^{}*S", i)), &r_power_S)?;
-        //     }
-        // }
 
         // Compute the Sumcheck Verification
-        let mut c_fold = alloc_zero(cs.namespace(|| "zero"));
-        let mut one = alloc_one(cs.namespace(||  format!("one")));;
-        for i in 0..c.len() {
-            let r_bits_i = ro.squeeze(cs.namespace(|| format!("r bits^{i}")), NUM_CHALLENGE_BITS)?;
-            let r_i = le_bits_to_num(cs.namespace(|| format!("r^{i}")), &r_bits_i)?;
-            let mut basis = alloc_one(cs.namespace(||  format!("basis^{i}_one")));;
-            for (j, c_ij) in c[i].iter().enumerate() {
-                let r_i_c_ij = AllocatedNum::alloc(cs.namespace(|| format!("r^{i} - c^{i}^{j}")), || {
-                    Ok(*r_i.get_value().get()? * c_ij.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce r^{i} - c^{i}^{j} = r_i_c_{i}_{j}"),
-                    |lc| lc + r_i.get_variable() - c_ij.get_variable(),
-                    |lc| lc,
-                    |lc| lc + r_i_c_ij.get_variable(),
-                );
-                // compute the inversion of r_i_c_ij
-                let r_i_c_ij_inv = AllocatedNum::alloc(cs.namespace(|| format!("r_{i}_c_ij_inv_{j}")), || {
-                    Ok(r_i_c_ij.get_value().get()?.invert().unwrap_or(E::Base::ZERO))
-                })?;
-                // enforce r_i_c * r_i_c_inv = 1
-                cs.enforce(
-                    || format!("enforce inv_{i}_{j}"),
-                    |lc| lc + r_i_c_ij.get_variable(),
-                    |lc| lc + r_i_c_ij_inv.get_variable(),
-                    |lc| lc + one.get_variable(),
-                );
-                let prev_basis = basis.clone();
-                basis = AllocatedNum::alloc(cs.namespace(|| format!("basis * (r^{i} - c^{i}^{j})")), || {
-                    Ok(*basis.get_value().get()? * r_i_c_ij_inv.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce basis_update_{i}_{j}"),
-                    |lc| lc + prev_basis.get_variable(),
-                    |lc| lc + r_i_c_ij_inv.get_variable(),
-                    |lc| lc + basis.get_variable(),
-                );
-            }
-            for j in 0..c[i].len() {
-                let basis_inv = AllocatedNum::alloc(cs.namespace(|| format!("basis_inv^{i}^{j}")), || {
-                    Ok(basis.get_value().get()?.invert().unwrap_or(E::Base::ZERO))
-                })?;
-                cs.enforce(
-                    || format!("enforce basis inv_{i}_{j}"),
-                    |lc| lc + basis.get_variable(),
-                    |lc| lc + basis_inv.get_variable(),
-                    |lc| lc + one.get_variable(),
-                );
-                // compute c[i][j]/basis
-                let c_ij = AllocatedNum::alloc(cs.namespace(|| format!("c^{i}^{j} * basis_inv")), || {
-                    Ok(*c[i][j].get_value().get()? * basis_inv.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce c_{i}_{j} = c[i][j] * basis_inv"),
-                    |lc| lc + c[i][j].get_variable(),
-                    |lc| lc + basis_inv.get_variable(),
-                    |lc| lc + c_ij.get_variable(),
-                );
-
-                // accumulate to c_fold
-                let c_fold_prev = c_fold.clone();
-                c_fold = AllocatedNum::alloc(cs.namespace(|| format!("c_fold + c^{i}^{j}")), || {
-                    Ok(*c_fold.get_value().get()? + c_ij.get_value().get()?)
-                })?;
-                cs.enforce(
-                    || format!("enforce c_fold_update_{i}_{j}"),
-                    |lc| lc + c_fold_prev.get_variable(),
-                    |lc| lc + c_ij.get_variable(),
-                    |lc| lc + c_fold.get_variable(),
-                );
-                ro.absorb(&c[i][j]);
-            }
-        }
+        let mut eval_e = alloc_zero(cs.namespace(|| "zero"));
+        let mut u_u = alloc_one(cs.namespace(|| "one"));;
+        Self::sumcheck_verify(&mut cs, ro,3, compressed_polys, taus, final_evals, eval_e, u_u).unwrap();
 
         // E_fold = self.E + r * T
         let rT = T.scalar_mul(cs.namespace(|| "r * T"), &r_bits)?;
@@ -678,6 +588,7 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         T: &AllocatedPoint<E>,
         S: &AllocatedPoint<E>,
         c: &Vec<Vec<AllocatedNum<E::Base>>>,
+        deg: usize,
         ro_consts: ROConstantsCircuit<E>,
     ) -> Result<AllocatedRelaxedR1CSInstance<E>, SynthesisError> {
         // Compute r:
@@ -830,4 +741,58 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
 
         Ok(AllocatedRelaxedR1CSInstance { W, R, E, u, X0, X1 })
     }
+}
+
+pub fn sumcheck_prove<E: Engine>(
+    n: usize,
+) -> Result<(SumcheckProof<E>, Vec<E::Scalar>, Vec<E::Scalar>), NovaError> {
+    // n must be > 0
+    if n == 0 {
+        return Err(NovaError::InvalidSumcheckProof);
+    }
+
+    // length = 2^n
+    let len = 1usize.checked_shl(n as u32).ok_or(NovaError::InvalidSumcheckProof)?;
+    if len == 0 {
+    return Err(NovaError::InvalidSumcheckProof);
+    }
+
+    // generate pseudorandom evals_a and evals_b from seed, evals_c = element-wise product
+    let mut evals_a: Vec<E::Scalar> = Vec::with_capacity(len);
+    let mut evals_b: Vec<E::Scalar> = Vec::with_capacity(len);
+    let mut evals_c: Vec<E::Scalar> = Vec::with_capacity(len);
+
+    for i in 0..len {
+    let a = E::Scalar::random(&mut OsRng);
+    let b = E::Scalar::random(&mut OsRng);
+    let c = a * b;
+    evals_a.push(a);
+    evals_b.push(b);
+    evals_c.push(c);
+    }
+
+    let mut taus: Vec<E::Scalar> = Vec::with_capacity(n);
+    for j in 0..n {
+    taus.push(E::Scalar::random(&mut OsRng));
+    }
+
+    let mut poly_a = MultilinearPolynomial::new(evals_a);
+    let mut poly_b = MultilinearPolynomial::new(evals_b);
+    let mut poly_c = MultilinearPolynomial::new(evals_c);
+
+    let mut poly_abc = poly_a.clone().mul(poly_b.clone()).unwrap();
+    poly_abc = poly_abc.sub(poly_c.clone()).unwrap();
+    let claim = poly_abc.evaluate(&taus);
+
+    let mut prover_transcript = <<E as Engine>::TE as TranscriptEngineTrait<E>>::new(b"sumcheck_test");
+    let (proof, _r_vec, final_evals) = SumcheckProof::<E>::prove_cubic_with_three_inputs(
+        &claim,
+        taus.clone(),
+        &mut poly_a,
+        &mut poly_b,
+        &mut poly_c,
+        &mut prover_transcript,
+    ).unwrap();
+
+    Ok((proof, taus, final_evals))
 }
