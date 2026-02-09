@@ -3,7 +3,7 @@
 //! - `SparsePolynomial`: Efficient representation of sparse multilinear polynomials, storing only non-zero evaluations.
 
 use crate::spartan::{math::Math, polys::eq::EqPolynomial};
-use core::ops::{Add, Index};
+use core::ops::{Add, Sub, Mul, Index};
 use ff::PrimeField;
 use itertools::Itertools as _;
 use rayon::prelude::*;
@@ -83,7 +83,7 @@ impl<Scalar: PrimeField> MultilinearPolynomial<Scalar> {
       (chis.into_par_iter(), self.Z.par_iter()),
       |chi_i, Z_i| chi_i * Z_i
     )
-    .sum()
+        .sum()
   }
 
   /// Evaluates the polynomial with the given evaluations and point.
@@ -95,7 +95,7 @@ impl<Scalar: PrimeField> MultilinearPolynomial<Scalar> {
       ),
       |a, b| a * b
     )
-    .sum()
+        .sum()
   }
 }
 
@@ -128,15 +128,15 @@ impl<Scalar: PrimeField> SparsePolynomial<Scalar> {
     let num_vars_z = self.Z.len().next_power_of_two().log_2();
     let chis = EqPolynomial::evals_from_points(&r[self.num_vars - 1 - num_vars_z..]);
     let eval_partial: Scalar = self
-      .Z
-      .iter()
-      .zip(chis.iter())
-      .map(|(z, chi)| *z * *chi)
-      .sum();
+        .Z
+        .iter()
+        .zip(chis.iter())
+        .map(|(z, chi)| *z * *chi)
+        .sum();
 
     let common = (0..self.num_vars - 1 - num_vars_z)
-      .map(|i| Scalar::ONE - r[i])
-      .product::<Scalar>();
+        .map(|i| Scalar::ONE - r[i])
+        .product::<Scalar>();
 
     common * eval_partial
   }
@@ -153,6 +153,38 @@ impl<Scalar: PrimeField> Add for MultilinearPolynomial<Scalar> {
     }
 
     let sum: Vec<Scalar> = zip_with!(into_iter, (self.Z, other.Z), |a, b| a + b).collect();
+
+    Ok(MultilinearPolynomial::new(sum))
+  }
+}
+
+/// Subs another multilinear polynomial to `self`.
+/// Assumes the two polynomials have the same number of variables.
+impl<Scalar: PrimeField> Sub for MultilinearPolynomial<Scalar> {
+  type Output = Result<Self, &'static str>;
+
+  fn sub(self, other: Self) -> Self::Output {
+    if self.get_num_vars() != other.get_num_vars() {
+      return Err("The two polynomials must have the same number of variables");
+    }
+
+    let sum: Vec<Scalar> = zip_with!(into_iter, (self.Z, other.Z), |a, b| a - b).collect();
+
+    Ok(MultilinearPolynomial::new(sum))
+  }
+}
+
+/// Muls another multilinear polynomial to `self`.
+/// Assumes the two polynomials have the same number of variables.
+impl<Scalar: PrimeField> Mul for MultilinearPolynomial<Scalar> {
+  type Output = Result<Self, &'static str>;
+
+  fn mul(self, other: Self) -> Self::Output {
+    if self.get_num_vars() != other.get_num_vars() {
+      return Err("The two polynomials must have the same number of variables");
+    }
+
+    let sum: Vec<Scalar> = zip_with!(into_iter, (self.Z, other.Z), |a, b| a * b).collect();
 
     Ok(MultilinearPolynomial::new(sum))
   }
@@ -242,6 +274,38 @@ mod tests {
     test_mlp_add_with::<secp256k1::Scalar>();
   }
 
+  fn test_mlp_sub_with<F: PrimeField>() {
+    let mlp1 = make_mlp(4, F::from(7));
+    let mlp2 = make_mlp(4, F::from(3));
+
+    let mlp3 = mlp1.sub(mlp2).unwrap();
+
+    assert_eq!(mlp3.Z, vec![F::from(4); 4]);
+  }
+
+  #[test]
+  fn test_mlp_sub() {
+    test_mlp_sub_with::<pallas::Scalar>();
+    test_mlp_sub_with::<bn256::Scalar>();
+    test_mlp_sub_with::<secp256k1::Scalar>();
+  }
+
+  fn test_mlp_mul_with<F: PrimeField>() {
+    let mlp1 = make_mlp(4, F::from(3));
+    let mlp2 = make_mlp(4, F::from(7));
+
+    let mlp3 = mlp1.mul(mlp2).unwrap();
+
+    assert_eq!(mlp3.Z, vec![F::from(21); 4]);
+  }
+
+  #[test]
+  fn test_mlp_mul() {
+    test_mlp_mul_with::<pallas::Scalar>();
+    test_mlp_mul_with::<bn256::Scalar>();
+    test_mlp_mul_with::<secp256k1::Scalar>();
+  }
+
   fn test_evaluation_with<F: PrimeField>() {
     let num_evals = 4;
     let mut evals: Vec<F> = Vec::with_capacity(num_evals);
@@ -279,8 +343,8 @@ mod tests {
   ) -> MultilinearPolynomial<Scalar> {
     MultilinearPolynomial::new(
       std::iter::from_fn(|| Some(Scalar::random(&mut rng)))
-        .take(1 << num_vars)
-        .collect(),
+          .take(1 << num_vars)
+          .collect(),
     )
   }
 
@@ -315,8 +379,8 @@ mod tests {
 
       // draw a random point
       let pt: Vec<_> = std::iter::from_fn(|| Some(F::random(&mut rng)))
-        .take(n)
-        .collect();
+          .take(n)
+          .collect();
       // this shows the order in which coordinates are evaluated
       assert_eq!(poly.evaluate(&pt), bind_sequence(&poly, &pt).Z[0])
     }

@@ -12,8 +12,8 @@ pub mod snark;
 #[macro_use]
 mod macros;
 pub(crate) mod math;
-pub(crate) mod polys;
-pub(crate) mod sumcheck;
+pub mod polys;
+pub mod sumcheck;
 
 pub use sumcheck::SumcheckEngine;
 

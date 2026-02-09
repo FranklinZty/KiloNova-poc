@@ -37,8 +37,8 @@ pub trait SumcheckEngine<E: Engine>: Send + Sync {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub(crate) struct SumcheckProof<E: Engine> {
-  compressed_polys: Vec<CompressedUniPoly<E::Scalar>>,
+pub struct SumcheckProof<E: Engine> {
+  pub compressed_polys: Vec<CompressedUniPoly<E::Scalar>>,
 }
 
 impl<E: Engine> SumcheckProof<E> {
