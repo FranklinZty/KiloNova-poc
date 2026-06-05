@@ -1,65 +1,36 @@
-# zk\-PCD
+
+# KiloNova
+
+This is a proof-of-concept implementation of KiloNova for academic use.
+Please do NOT use this in the production environment.
+
+# Introduction
+
+KiloNova is a high-speed recursive zkSNARK, allowing a group of mutually distrusted provers to perform a complicated computation in private, and finally output a short proof with succinct verification to convince the verifier.
+
+Theoretically, KiloNova solves a specific class of problems called Proof-Carrying Data (a generalized version of Incrementally Verifiable Computation) by utilizing the generic folding schemes we proposed. Moreover, KiloNova provides some useful attributes such as (1) handling non-uniform circuits, which is necessary for building zkVM, and (2) zero-knowledge, which ensures privacy among different provers.
+
+Inspired by HyperNova, KiloNova linearizes the high-degree CCS (Customizable Constraint Systems) relation by running an “early stopping” version of SuperSpartan and folds the derived instances without introducing extra communications.
+The theoretical analysis shows that KiloNova achieves the same asymptotic complexity as HyperNova while providing the more appealing attributes mentioned above.
 
 <p align="center">
-  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/license-APACHE-blue.svg"></a>
-  <a href="https://img.shields.io/badge/status-proof--of--concept-orange"><img src="https://img.shields.io/badge/status-proof--of--concept-orange.svg"></a>
-</p>
+<img src="https://github.com/FranklinZty/KiloNova-poc/assets/44116484/db9a7d96-8ef3-4622-b239-f54ef3d2b906" width="250">  <br>
+Kilonova Space Explosion Could (from agnirva.medium.com)
+<p>
 
-<p align="center">A Rust implementation of Zero-Knowledge Proof-Carrying Data (PCD): modular, efficient and recursive-friendly </p>
+# Development Progress
 
-## About
+## Generic Folding Schemes (In Progress)
 
-**zk\-PCD** is a new theoretical and practical improvements for zero-knowledge Proof-Carrying Data.
-This repository is a proof-of-concept implementation for validating the performance improvements claimed in the paper "Zero-Knowledge Proof-Carrying Data from
-Accumulation Schemes".
+1. Implement multi-folding schemes for CCS instances (Finished).
+2. Generalize the folding scheme to handle instances with non-uniform circuits (In Progress).
+3. Achieve zero knowledge (In Progress).
 
-## Key Features
+## Recursive Circuit for CCS (TODO)
 
-- **Zero Knowledge**: the zkPCD naturally supports zero-knowledge property for the recursive proofs.
-- **New Construction**: we propose a new zero-knowledge PCD construction that directly avoids the requirement of a zero-knowledge NARK component.
-- **High Efficiency**: we present a concrete design for an eligible accumulation scheme for special sound protocol.
-- **Pluggable Backends**: abstract interface to integrate multiple curve engines (e.g., Pasta, Bn256, Secp256k1).
+This step requires a crate for building CCS arithmetic circuits from rust (just like the bellpepper for building R1CS circuits in Nova).
+However, there is no known crate that satisfies this requirement.
 
-<img src="./doc/ZK-PCD.png" alt="New Zero-Knowledge Proof-Carrying Data Construction" width="60%" />
+## KiloNova PCD Constructions (TODO)
 
-## Asymptotic Complexity
-
-Comparisons of the additional proof size for zk between different PCDs
-| SPS Protocols |                                Protogalaxy | Ours |
-|---------------|-------------------------------------------:|:---|
-| Degree-d gate |          \$O(2^d)\ G + O(d\log m)\ F\$ | \$2G + O(d\log m)\ F\$ |
-| Permutation   |                  \$4G + O(\log m)\ F\$ | \$2G + O(\log m)\ F\$ |
-| Lookup        | \$(4\ell+2)\ G + O(\log m + \ell)\ F\$ | \$3G + O(\log (m+\ell))\ F\$ |
-| R1CS          |                  \$7G + O(\log m)\ F\$ | \$2G + O(\log m)\ F\$ |
-| CCS           |          \$O(2^d)\ G + O(d\log m)\ F\$ | \$2G + O(d\log m)\ F\$ |
-
-_Footnote:_ Assume \$m\$ is the number of accumulated predicate instance-proof pairs, \$d\$ is the maximum degree of relations, and \$\ell\$ is the size of the query set for lookup arguments. F, G represent the cost of field and group operations, respectively.
-
-## Practical Complexity (simulated)
-Currently, we only implement a simulated R1CS circuit for estimating the size of recursive overhead (especially the NIFS verification cost).
-Note: the baseline is the recursive circuit size of non-ZK-version Nova (constraint number: 11047). Subtracting this baseline number from the simulated result can demonstrate the additional recursive cost for implementing the zero-knowledge property. 
-
-| Steps | Degrees | BCL+21 Constraints | BCL+21 Synthesize Time \(ms\) | ZK\-PCD Constraints | ZK\-PCD Synthesize Time \(ms\) |
-|---:|---:|---:|---:|---:|---:|
-| 1 | 2 | 14577 | 141 | 12139 | 112 |
-| 1 | 3 | 19459 | 171 | 12145 | 115 |
-| 1 | 4 | 29217 | 231 | 12151 | 114 |
-| 2 | 2 | 15667 | 180 | 13229 | 154 |
-| 2 | 3 | 20555 | 180 | 13241 | 156 |
-| 2 | 4 | 30319 | 267 | 13253 | 161 |
-| 3 | 2 | 16757 | 182 | 14319 | 173 |
-| 3 | 3 | 21651 | 213 | 14337 | 166 |
-| 3 | 4 | 31421 | 275 | 14355 | 177 |
-
-## Installation
-
-```bash
-git clone [this repo](https://anonymous.4open.science/r/zk-PCD-B3FF/)
-cd zk-PCD
-cargo run
-```
-
-## Reference
-[1] Kothapalli, Abhiram, Srinath Setty, and Ioanna Tzialla. "Nova: Recursive zero-knowledge arguments from folding schemes." Annual International Cryptology Conference. Cham: Springer Nature Switzerland, 2022.
-
-[2] Eagen, Liam, and Ariel Gabizon. "Protogalaxy: Efficient protostar-style folding of multiple instances." Cryptology ePrint Archive (2023).
+Implement the zero-knowledge PCD scheme, and integrate it with an off-the-shell SNARK system.
