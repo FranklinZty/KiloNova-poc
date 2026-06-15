@@ -1,11 +1,12 @@
 //! This module implements various gadgets necessary for folding R1CS types.
 
-use std::ops::{Mul, Sub};
+use ff::Field;
+use nova_snark::errors::NovaError;
+use nova_snark::spartan::polys::univariate::CompressedUniPoly;
+use nova_snark::traits::TranscriptEngineTrait;
 use nova_snark::{
     constants::{BN_LIMB_WIDTH, BN_N_LIMBS, NUM_CHALLENGE_BITS},
     frontend::{num::AllocatedNum, Assignment, Boolean, ConstraintSystem, SynthesisError},
-    traits::{commitment::CommitmentTrait, Engine, Group, ROCircuitTrait, ROConstantsCircuit},
-    r1cs::{R1CSInstance, RelaxedR1CSInstance},
     gadgets::{
         ecc::AllocatedPoint,
         nonnative::{
@@ -13,23 +14,18 @@ use nova_snark::{
             util::{f_to_nat, Num},
         },
         utils::{
-            alloc_bignat_constant, alloc_zero, alloc_one, alloc_scalar_as_base, conditionally_select,
-            conditionally_select_bignat, le_bits_to_num,
+            alloc_bignat_constant, alloc_one, alloc_scalar_as_base, alloc_zero,
+            conditionally_select, conditionally_select_bignat, le_bits_to_num,
         },
     },
-    spartan::{
-        sumcheck::*,
-        polys::multilinear::MultilinearPolynomial,
-        polys::eq::EqPolynomial,
-    }
+    r1cs::{R1CSInstance, RelaxedR1CSInstance},
+    spartan::{polys::eq::EqPolynomial, polys::multilinear::MultilinearPolynomial, sumcheck::*},
+    traits::{commitment::CommitmentTrait, Engine, Group, ROCircuitTrait, ROConstantsCircuit},
 };
-use ff::Field;
 use num_traits::pow;
-use rand_core::RngCore;
-use nova_snark::errors::NovaError;
-use nova_snark::spartan::polys::univariate::CompressedUniPoly;
-use nova_snark::traits::TranscriptEngineTrait;
 use rand_core::OsRng;
+use rand_core::RngCore;
+use std::ops::{Mul, Sub};
 
 /// An Allocated R1CS Instance
 #[derive(Clone)]
@@ -103,7 +99,8 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
 
         // u << |E::Base| despite the fact that u is a scalar.
         // So we parse all of its bytes as a E::Base element
-        let u = alloc_scalar_as_base::<E, _>(cs.namespace(|| "allocate u"), inst.map(|inst| inst.u))?;
+        let u =
+            alloc_scalar_as_base::<E, _>(cs.namespace(|| "allocate u"), inst.map(|inst| inst.u))?;
 
         // Allocate X0 and X1. If the input instance is None, then allocate default values 0.
         let X0 = BigNat::alloc_from_nat(
@@ -248,9 +245,10 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         if deg > 1 {
             let mut r_power_S = rS;
             // For loop for computing r^2*S, r^3*S, ..., r^{n-1}*S
-            for i in 2..pow(2,deg) {
+            for i in 2..pow(2, deg) {
                 // compute the next r^i * S
-                r_power_S = r_power_S.scalar_mul(cs.namespace(|| format!("r^{} * S", i)), &r_bits)?;
+                r_power_S =
+                    r_power_S.scalar_mul(cs.namespace(|| format!("r^{} * S", i)), &r_bits)?;
                 // accumulate to R_fold
                 R_fold = R_fold.add(cs.namespace(|| format!("R_fold + r^{}*S", i)), &r_power_S)?;
             }
@@ -258,8 +256,18 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
 
         // Compute the Sumcheck Verification
         let mut eval_e = alloc_zero(cs.namespace(|| "zero"));
-        let mut u_u = alloc_one(cs.namespace(|| "one"));;
-        Self::sumcheck_verify(&mut cs, ro,3, compressed_polys, taus, final_evals, eval_e, u_u).unwrap();
+        let mut u_u = alloc_one(cs.namespace(|| "one"));
+        Self::sumcheck_verify(
+            &mut cs,
+            ro,
+            3,
+            compressed_polys,
+            taus,
+            final_evals,
+            eval_e,
+            u_u,
+        )
+        .unwrap();
 
         // E_fold = self.E + r * T
         let rT = T.scalar_mul(cs.namespace(|| "r * T"), &r_bits)?;
@@ -341,7 +349,7 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
         taus: &Vec<AllocatedNum<E::Base>>,
         evals: &Vec<AllocatedNum<E::Base>>,
         eval_e: AllocatedNum<E::Base>,
-        u_u: AllocatedNum<E::Base>
+        u_u: AllocatedNum<E::Base>,
     ) -> Result<(), NovaError> {
         // --- sumcheck verification (mirrors the snippet provided) ---
         // number of rounds for the sumcheck (use same as taus length here)
@@ -362,7 +370,7 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
 
         for i in 0..polys.len() {
             // verify degree bound
-            if polys[i].len() != degree_bound+1 {
+            if polys[i].len() != degree_bound + 1 {
                 return Err(NovaError::InvalidSumcheckProof);
             }
 
@@ -376,13 +384,14 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
             let r_i = le_bits_to_num(cs.namespace(|| format!("r_{i}")), &r_bits)?;
 
             // evaluate the claimed degree-ell polynomial at r_i
-            let mut r_term = alloc_one(cs.namespace(|| format!("r_term_{i}")));;
+            let mut r_term = alloc_one(cs.namespace(|| format!("r_term_{i}")));
             for j in 0..polys[i].len() {
                 let r_term_prev = r_term.clone();
                 if j > 0 {
-                    r_term = AllocatedNum::alloc(cs.namespace(|| format!("r_term_{i}_{j}")), || {
-                        Ok(*r_term_prev.get_value().get()? * r_i.get_value().get()?)
-                    })?;
+                    r_term =
+                        AllocatedNum::alloc(cs.namespace(|| format!("r_term_{i}_{j}")), || {
+                            Ok(*r_term_prev.get_value().get()? * r_i.get_value().get()?)
+                        })?;
                     cs.enforce(
                         || format!("enforce r_term_update_{i}_{j}"),
                         |lc| lc + r_i.get_variable(),
@@ -391,9 +400,11 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
                     );
                 }
                 let claim_finals_prev = claim_finals.clone();
-                claim_finals = AllocatedNum::alloc(cs.namespace(|| format!("claim_final_{i}_{j}")), || {
-                    Ok(*claim_finals_prev.get_value().get()? + *r_term.get_value().get()? * polys[i][j].get_value().get()?)
-                })?;
+                claim_finals =
+                    AllocatedNum::alloc(cs.namespace(|| format!("claim_final_{i}_{j}")), || {
+                        Ok(*claim_finals_prev.get_value().get()?
+                            + *r_term.get_value().get()? * polys[i][j].get_value().get()?)
+                    })?;
                 cs.enforce(
                     || format!("enforce claim_final_update_{i}_{j}"),
                     |lc| lc + r_term.get_variable(),
@@ -414,7 +425,8 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
                 |lc| lc + eq_tau_L.get_variable(),
             );
             let eq_tau_R = AllocatedNum::alloc(cs.namespace(|| format!("eq_tau_R_{i}")), || {
-                Ok((*one.get_value().get()? - taus[i].get_value().get()?) * (*one.get_value().get()? - r_i.get_value().get()?))
+                Ok((*one.get_value().get()? - taus[i].get_value().get()?)
+                    * (*one.get_value().get()? - r_i.get_value().get()?))
             })?;
             cs.enforce(
                 || format!("enforce eq_tau_R_{i}"),
@@ -423,7 +435,8 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
                 |lc| lc + eq_tau_R.get_variable(),
             );
             eq_tau = AllocatedNum::alloc(cs.namespace(|| format!("eq_tau_{i}")), || {
-                Ok(*eq_tau_prev.get_value().get()? * (*eq_tau_L.get_value().get()? + eq_tau_R.get_value().get()?))
+                Ok(*eq_tau_prev.get_value().get()?
+                    * (*eq_tau_L.get_value().get()? + eq_tau_R.get_value().get()?))
             })?;
             cs.enforce(
                 || format!("enforce eq_tau_update_{i}"),
@@ -451,9 +464,13 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
             |lc| lc + evals[2].get_variable(),
             |lc| lc + eval_uc.get_variable(),
         );
-        let claim_final_expected = AllocatedNum::<E::Base>::alloc(cs.namespace(|| "claim_final_expected"), || {
-            Ok(*eq_tau.get_value().get()? * (*eval_ab.get_value().get()? - eval_uc.get_value().get()? - eval_e.get_value().get()?))
-        })?;
+        let claim_final_expected =
+            AllocatedNum::<E::Base>::alloc(cs.namespace(|| "claim_final_expected"), || {
+                Ok(*eq_tau.get_value().get()?
+                    * (*eval_ab.get_value().get()?
+                        - eval_uc.get_value().get()?
+                        - eval_e.get_value().get()?))
+            })?;
         cs.enforce(
             || format!("enforce claim_final_expected"),
             |lc| lc + eq_tau.get_variable(),
@@ -505,8 +522,18 @@ impl<E: Engine> AllocatedRelaxedR1CSInstance<E> {
 
         // Compute the Sumcheck Verification
         let mut eval_e = alloc_zero(cs.namespace(|| "zero"));
-        let mut u_u = alloc_one(cs.namespace(|| "one"));;
-        Self::sumcheck_verify(&mut cs, ro,3, compressed_polys, taus, final_evals, eval_e, u_u).unwrap();
+        let mut u_u = alloc_one(cs.namespace(|| "one"));
+        Self::sumcheck_verify(
+            &mut cs,
+            ro,
+            3,
+            compressed_polys,
+            taus,
+            final_evals,
+            eval_e,
+            u_u,
+        )
+        .unwrap();
 
         // E_fold = self.E + r * T
         let rT = T.scalar_mul(cs.namespace(|| "r * T"), &r_bits)?;
@@ -752,9 +779,11 @@ pub fn sumcheck_prove<E: Engine>(
     }
 
     // length = 2^n
-    let len = 1usize.checked_shl(n as u32).ok_or(NovaError::InvalidSumcheckProof)?;
+    let len = 1usize
+        .checked_shl(n as u32)
+        .ok_or(NovaError::InvalidSumcheckProof)?;
     if len == 0 {
-    return Err(NovaError::InvalidSumcheckProof);
+        return Err(NovaError::InvalidSumcheckProof);
     }
 
     // generate pseudorandom evals_a and evals_b from seed, evals_c = element-wise product
@@ -763,17 +792,17 @@ pub fn sumcheck_prove<E: Engine>(
     let mut evals_c: Vec<E::Scalar> = Vec::with_capacity(len);
 
     for i in 0..len {
-    let a = E::Scalar::random(&mut OsRng);
-    let b = E::Scalar::random(&mut OsRng);
-    let c = a * b;
-    evals_a.push(a);
-    evals_b.push(b);
-    evals_c.push(c);
+        let a = E::Scalar::random(&mut OsRng);
+        let b = E::Scalar::random(&mut OsRng);
+        let c = a * b;
+        evals_a.push(a);
+        evals_b.push(b);
+        evals_c.push(c);
     }
 
     let mut taus: Vec<E::Scalar> = Vec::with_capacity(n);
     for j in 0..n {
-    taus.push(E::Scalar::random(&mut OsRng));
+        taus.push(E::Scalar::random(&mut OsRng));
     }
 
     let mut poly_a = MultilinearPolynomial::new(evals_a);
@@ -784,7 +813,8 @@ pub fn sumcheck_prove<E: Engine>(
     poly_abc = poly_abc.sub(poly_c.clone()).unwrap();
     let claim = poly_abc.evaluate(&taus);
 
-    let mut prover_transcript = <<E as Engine>::TE as TranscriptEngineTrait<E>>::new(b"sumcheck_test");
+    let mut prover_transcript =
+        <<E as Engine>::TE as TranscriptEngineTrait<E>>::new(b"sumcheck_test");
     let (proof, _r_vec, final_evals) = SumcheckProof::<E>::prove_cubic_with_three_inputs(
         &claim,
         taus.clone(),
@@ -792,7 +822,8 @@ pub fn sumcheck_prove<E: Engine>(
         &mut poly_b,
         &mut poly_c,
         &mut prover_transcript,
-    ).unwrap();
+    )
+    .unwrap();
 
     Ok((proof, taus, final_evals))
 }

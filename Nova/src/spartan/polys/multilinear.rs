@@ -3,7 +3,7 @@
 //! - `SparsePolynomial`: Efficient representation of sparse multilinear polynomials, storing only non-zero evaluations.
 
 use crate::spartan::{math::Math, polys::eq::EqPolynomial};
-use core::ops::{Add, Sub, Mul, Index};
+use core::ops::{Add, Index, Mul, Sub};
 use ff::PrimeField;
 use itertools::Itertools as _;
 use rayon::prelude::*;
@@ -83,7 +83,7 @@ impl<Scalar: PrimeField> MultilinearPolynomial<Scalar> {
       (chis.into_par_iter(), self.Z.par_iter()),
       |chi_i, Z_i| chi_i * Z_i
     )
-        .sum()
+    .sum()
   }
 
   /// Evaluates the polynomial with the given evaluations and point.
@@ -95,7 +95,7 @@ impl<Scalar: PrimeField> MultilinearPolynomial<Scalar> {
       ),
       |a, b| a * b
     )
-        .sum()
+    .sum()
   }
 }
 
@@ -128,15 +128,15 @@ impl<Scalar: PrimeField> SparsePolynomial<Scalar> {
     let num_vars_z = self.Z.len().next_power_of_two().log_2();
     let chis = EqPolynomial::evals_from_points(&r[self.num_vars - 1 - num_vars_z..]);
     let eval_partial: Scalar = self
-        .Z
-        .iter()
-        .zip(chis.iter())
-        .map(|(z, chi)| *z * *chi)
-        .sum();
+      .Z
+      .iter()
+      .zip(chis.iter())
+      .map(|(z, chi)| *z * *chi)
+      .sum();
 
     let common = (0..self.num_vars - 1 - num_vars_z)
-        .map(|i| Scalar::ONE - r[i])
-        .product::<Scalar>();
+      .map(|i| Scalar::ONE - r[i])
+      .product::<Scalar>();
 
     common * eval_partial
   }
@@ -343,8 +343,8 @@ mod tests {
   ) -> MultilinearPolynomial<Scalar> {
     MultilinearPolynomial::new(
       std::iter::from_fn(|| Some(Scalar::random(&mut rng)))
-          .take(1 << num_vars)
-          .collect(),
+        .take(1 << num_vars)
+        .collect(),
     )
   }
 
@@ -379,8 +379,8 @@ mod tests {
 
       // draw a random point
       let pt: Vec<_> = std::iter::from_fn(|| Some(F::random(&mut rng)))
-          .take(n)
-          .collect();
+        .take(n)
+        .collect();
       // this shows the order in which coordinates are evaluated
       assert_eq!(poly.evaluate(&pt), bind_sequence(&poly, &pt).Z[0])
     }

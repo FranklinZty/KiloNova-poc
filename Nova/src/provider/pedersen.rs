@@ -210,7 +210,7 @@ where
   type DerandKey = DerandKey<E>;
 
   fn setup(label: &'static [u8], n: usize) -> Self::CommitmentKey {
-    let gens = E::GE::from_label(label, n.next_power_of_two() + 1);
+    let gens = E::GE::from_label(label, n + 1);
 
     let (h, ck) = gens.split_first().unwrap();
 
@@ -283,7 +283,7 @@ where
     _label: &'static [u8],
     n: usize,
   ) -> Result<Self::CommitmentKey, PtauFileError> {
-    let num = n.next_power_of_two();
+    let num = n;
     {
       let mut head = [0u8; 12];
       reader.read_exact(&mut head)?;

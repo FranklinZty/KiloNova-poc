@@ -1,47 +1,39 @@
 #![allow(unused)]
 #[allow(non_snake_case)]
 #[allow(dead_code)]
-
 mod circuit;
 
+use crate::circuit::{r1cs::sumcheck_prove, NovaAugmentedCircuit, NovaAugmentedCircuitInputs};
+use digest::consts::U24;
 use std::marker::PhantomData;
 use std::time::Instant;
-use digest::consts::U24;
-use crate::circuit::{
-    NovaAugmentedCircuit, NovaAugmentedCircuitInputs,
-    r1cs::sumcheck_prove
-};
 
 use ff::{Field, PrimeField};
-use rand_core::OsRng;
-use nova_snark::{
-    frontend::{
-        r1cs::{NovaShape, NovaWitness}
-        ,
-        test_shape_cs::TestShapeCS,
-        ConstraintSystem,
-    },
-    provider::{PallasEngine, VestaEngine},
-    traits::{
-        circuit::TrivialCircuit,
-        commitment::CommitmentEngineTrait,
-        snark::default_ck_hint,
-        Engine
-        ,
-        ROConstantsCircuit,
-    }
-    ,
-};
 use nova_snark::errors::NovaError;
+use nova_snark::frontend::gadgets::poseidon::{
+    IOPattern, Simplex, Sponge, SpongeAPI, SpongeOp, Strength,
+};
 use nova_snark::frontend::num::AllocatedNum;
 use nova_snark::frontend::{Elt, SpongeCircuit, SynthesisError};
-use nova_snark::frontend::gadgets::poseidon::{IOPattern, Simplex, Sponge, SpongeAPI, SpongeOp, Strength};
 use nova_snark::gadgets::utils::scalar_as_base;
 use nova_snark::nova::PublicParams;
 use nova_snark::provider::{Bn256EngineKZG, GrumpkinEngine};
 use nova_snark::spartan::polys::univariate::CompressedUniPoly;
 use nova_snark::traits::circuit::StepCircuit;
 use nova_snark::traits::Group;
+use nova_snark::{
+    frontend::{
+        r1cs::{NovaShape, NovaWitness},
+        test_shape_cs::TestShapeCS,
+        ConstraintSystem,
+    },
+    provider::{PallasEngine, VestaEngine},
+    traits::{
+        circuit::TrivialCircuit, commitment::CommitmentEngineTrait, snark::default_ck_hint, Engine,
+        ROConstantsCircuit,
+    },
+};
+use rand_core::OsRng;
 
 // some type aliases
 type CommitmentKey<E> = <<E as Engine>::CE as CommitmentEngineTrait<E>>::CommitmentKey;
@@ -51,7 +43,9 @@ type CE<E> = <E as Engine>::CE;
 
 #[derive(Copy, Clone)]
 pub(crate) enum Scheme {
-    Nova, BCL21, ZKPCD
+    Nova,
+    KiloNova,
+    ZKPCD,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -102,8 +96,8 @@ impl<F: PrimeField> CubicCircuit<F> {
     }
 }
 
-
-fn test_recursive_circuit_with<E1, E2>(flag: Scheme, mu: usize, deg: usize) where
+fn test_recursive_circuit_with<E1, E2>(flag: Scheme, mu: usize, deg: usize)
+where
     E1: Engine<Base = <E2 as Engine>::Scalar>,
     E2: Engine<Base = <E1 as Engine>::Scalar>,
 {
@@ -113,7 +107,8 @@ fn test_recursive_circuit_with<E1, E2>(flag: Scheme, mu: usize, deg: usize) wher
         &test_circuit,
         &*default_ck_hint(),
         &*default_ck_hint(),
-    ).unwrap();
+    )
+    .unwrap();
 
     // generate a sumcheck proof
     // TODO: enable the sumcheck for arbitrary degree (now is only a*b - c)
@@ -147,7 +142,15 @@ fn test_recursive_circuit_with<E1, E2>(flag: Scheme, mu: usize, deg: usize) wher
     );
 
     let circuit: NovaAugmentedCircuit<'_, E2, TrivialCircuit<<E2 as Engine>::Base>> =
-        NovaAugmentedCircuit::new(true, Some(inputs), &tc, ro_consts.clone(), mu, deg, flag.clone());
+        NovaAugmentedCircuit::new(
+            true,
+            Some(inputs),
+            &tc,
+            ro_consts.clone(),
+            mu,
+            deg,
+            flag.clone(),
+        );
 
     let mut cs: TestShapeCS<E1> = TestShapeCS::new();
     let start = Instant::now();
@@ -157,13 +160,22 @@ fn test_recursive_circuit_with<E1, E2>(flag: Scheme, mu: usize, deg: usize) wher
 
     match flag {
         Scheme::ZKPCD => {
-            println!("Simulating ZK-PCD recursive step with {} steps and {} degrees", mu, deg);
-        },
-        Scheme::BCL21 => {
-            println!("Simulating BCL+21 recursive step with {} steps and {} degrees", mu, deg);
-        },
+            println!(
+                "Simulating ZK-PCD recursive step with {} steps and {} degrees",
+                mu, deg
+            );
+        }
+        Scheme::KiloNova => {
+            println!(
+                "Simulating BCL+21 recursive step with {} steps and {} degrees",
+                mu, deg
+            );
+        }
         Scheme::Nova => {
-            println!("Simulating Nova recursive step with {} steps and {} degrees", mu, deg);
+            println!(
+                "Simulating Nova recursive step with {} steps and {} degrees",
+                mu, deg
+            );
         }
     }
     println!("Recursive constraint number: {}", cs.num_constraints());
@@ -174,9 +186,9 @@ fn test_recursive_circuit_with<E1, E2>(flag: Scheme, mu: usize, deg: usize) wher
 fn main() {
     println!("Run the baseline non-zk Nova recursive circuit");
     test_recursive_circuit_with::<PallasEngine, VestaEngine>(Scheme::Nova, 1, 1);
-    for mu in [1,2,3] {
-        for deg in [2,3,4] {
-            test_recursive_circuit_with::<PallasEngine, VestaEngine>(Scheme::BCL21, mu, deg);
+    for mu in [1, 2, 3] {
+        for deg in [2, 3, 4] {
+            test_recursive_circuit_with::<PallasEngine, VestaEngine>(Scheme::KiloNova, mu, deg);
             test_recursive_circuit_with::<PallasEngine, VestaEngine>(Scheme::ZKPCD, mu, deg);
         }
     }

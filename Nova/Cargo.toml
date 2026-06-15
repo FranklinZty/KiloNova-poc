@@ -71,6 +71,10 @@ harness = false
 name = "sumcheckeq"
 harness = false
 
+[[bench]]
+name = "kilonova-single-step"
+harness = false
+
 [features]
 default = []
 flamegraph = ["pprof2/flamegraph", "pprof2/criterion"]

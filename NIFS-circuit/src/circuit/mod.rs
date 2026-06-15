@@ -5,29 +5,31 @@
 //! Each circuit folds the last invocation of the other into the running instance
 
 pub mod r1cs;
-use r1cs::{AllocatedR1CSInstance, AllocatedRelaxedR1CSInstance};
-use nova_snark::spartan::polys::univariate::CompressedUniPoly;
 use crate::{Commitment, Scheme};
+use nova_snark::spartan::polys::univariate::CompressedUniPoly;
+use r1cs::{AllocatedR1CSInstance, AllocatedRelaxedR1CSInstance};
 
+use ff::Field;
+use nova_snark::spartan::polys::univariate::UniPoly;
 use nova_snark::{
     constants::NUM_HASH_BITS,
     frontend::{
         num::AllocatedNum, AllocatedBit, Assignment, Boolean, ConstraintSystem, SynthesisError,
     },
-    traits::{
-        circuit::StepCircuit, commitment::CommitmentTrait, Engine, ROCircuitTrait, ROConstantsCircuit,
-    },
-    r1cs::{R1CSInstance, RelaxedR1CSInstance},
     gadgets::{
         ecc::AllocatedPoint,
         utils::{
-            alloc_num_equals, alloc_scalar_as_base, alloc_zero, alloc_one, conditionally_select_vec, le_bits_to_num,
+            alloc_num_equals, alloc_one, alloc_scalar_as_base, alloc_zero,
+            conditionally_select_vec, le_bits_to_num,
         },
     },
+    r1cs::{R1CSInstance, RelaxedR1CSInstance},
+    traits::{
+        circuit::StepCircuit, commitment::CommitmentTrait, Engine, ROCircuitTrait,
+        ROConstantsCircuit,
+    },
 };
-use ff::Field;
 use serde::{Deserialize, Serialize};
-use nova_snark::spartan::polys::univariate::UniPoly;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -185,7 +187,8 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
         })?;
 
         // Allocate r_i+1
-        let r_next = AllocatedNum::alloc(cs.namespace(|| "r_i+1"), || Ok(self.inputs.get()?.r_next))?;
+        let r_next =
+            AllocatedNum::alloc(cs.namespace(|| "r_i+1"), || Ok(self.inputs.get()?.r_next))?;
 
         // Allocate the instance to be folded in
         let u = AllocatedR1CSInstance::alloc(
@@ -196,8 +199,7 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
         // Allocate T
         let T = AllocatedPoint::alloc(
             cs.namespace(|| "allocate T"),
-            self
-                .inputs
+            self.inputs
                 .as_ref()
                 .and_then(|inputs| inputs.T.map(|T| T.to_coordinates())),
         )?;
@@ -206,15 +208,14 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
         // Allocate S
         let S = AllocatedPoint::alloc(
             cs.namespace(|| "allocate S"),
-            self
-                .inputs
+            self.inputs
                 .as_ref()
                 .and_then(|inputs| inputs.S.map(|S| S.to_coordinates())),
         )?;
         S.check_on_curve(cs.namespace(|| "check S on curve"))?;
 
         // Allocate c If c is not provided (base case) allocate default value 0
-        let c:  Vec<Vec<AllocatedNum<E::Base>>> = (0..mu)
+        let c: Vec<Vec<AllocatedNum<E::Base>>> = (0..mu)
             .map(|i| {
                 (0..deg)
                     .map(|j| {
@@ -226,12 +227,17 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
             })
             .collect::<Result<Vec<Vec<AllocatedNum<E::Base>>>, _>>()?;
 
-        let compressed_polys = self.inputs.get()?.polys.as_ref().ok_or(SynthesisError::AssignmentMissing)?;
+        let compressed_polys = self
+            .inputs
+            .get()?
+            .polys
+            .as_ref()
+            .ok_or(SynthesisError::AssignmentMissing)?;
         let mut claim_finals = E::Base::ZERO;
         let mut polys: Vec<Vec<AllocatedNum<E::Base>>> = Vec::new();
         for i in 0..compressed_polys.len() {
             let poly = compressed_polys[i].decompress(&claim_finals);
-            let poly_temp: Vec<AllocatedNum<E::Base>> = (0..poly.degree()+1)
+            let poly_temp: Vec<AllocatedNum<E::Base>> = (0..poly.degree() + 1)
                 .map(|j| {
                     AllocatedNum::alloc(cs.namespace(|| format!("poly_{i}_{j}")), || {
                         Ok(poly.coeffs[j])
@@ -241,28 +247,43 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
             polys.push(poly_temp);
         }
 
-        let taus = self.inputs.get()?.taus.as_ref().ok_or(SynthesisError::AssignmentMissing)?;
+        let taus = self
+            .inputs
+            .get()?
+            .taus
+            .as_ref()
+            .ok_or(SynthesisError::AssignmentMissing)?;
         let taus_alloc: Vec<AllocatedNum<E::Base>> = (0..taus.len())
-            .map(|j| {
-                AllocatedNum::alloc(cs.namespace(|| format!("tau_{j}")), || {
-                    Ok(taus[j])
-                })
-            })
+            .map(|j| AllocatedNum::alloc(cs.namespace(|| format!("tau_{j}")), || Ok(taus[j])))
             .collect::<Result<Vec<AllocatedNum<E::Base>>, _>>()?;
 
-        let evals = self.inputs.get()?.evals.as_ref().ok_or(SynthesisError::AssignmentMissing)?;
+        let evals = self
+            .inputs
+            .get()?
+            .evals
+            .as_ref()
+            .ok_or(SynthesisError::AssignmentMissing)?;
         let evals_alloc: Vec<AllocatedNum<E::Base>> = (0..evals.len())
-            .map(|j| {
-                AllocatedNum::alloc(cs.namespace(|| format!("eval_{j}")), || {
-                    Ok(evals[j])
-                })
-            })
+            .map(|j| AllocatedNum::alloc(cs.namespace(|| format!("eval_{j}")), || Ok(evals[j])))
             .collect::<Result<Vec<AllocatedNum<E::Base>>, _>>()?;
 
-        Ok((pp_digest, i, z_0, z_i, U, r_i, r_next, u, T, S, c, polys, taus_alloc, evals_alloc))
+        Ok((
+            pp_digest,
+            i,
+            z_0,
+            z_i,
+            U,
+            r_i,
+            r_next,
+            u,
+            T,
+            S,
+            c,
+            polys,
+            taus_alloc,
+            evals_alloc,
+        ))
     }
-
-
 
     fn synthesize_hash_check<CS: ConstraintSystem<E::Base>>(
         &self,
@@ -299,7 +320,8 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
         mut cs: CS,
         u: AllocatedR1CSInstance<E>,
     ) -> Result<AllocatedRelaxedR1CSInstance<E>, SynthesisError> {
-        let U_default = AllocatedRelaxedR1CSInstance::default(cs.namespace(|| "Allocate U_default"))?;
+        let U_default =
+            AllocatedRelaxedR1CSInstance::default(cs.namespace(|| "Allocate U_default"))?;
         Ok(U_default)
     }
 
@@ -332,8 +354,8 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
                     self.deg.clone(),
                     self.ro_consts.clone(),
                 )?;
-            },
-            Scheme::BCL21 => {
+            }
+            Scheme::KiloNova => {
                 U_fold = U.fold_with_r1cs_blc21(
                     cs.namespace(|| "compute fold of U and u"),
                     pp_digest,
@@ -346,7 +368,7 @@ impl<'a, E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'a, E, SC> {
                     self.deg.clone(),
                     self.ro_consts.clone(),
                 )?;
-            },
+            }
             Scheme::ZKPCD => {
                 U_fold = U.fold_with_r1cs_zkpcd(
                     cs.namespace(|| "compute fold of U and u"),
@@ -376,22 +398,13 @@ impl<E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'_, E, SC> {
         let arity = self.step_circuit.arity();
 
         // Allocate all witnesses
-        let (
-            pp_digest,
-            i,
-            z_0,
-            z_i,
-            U,
-            r_i,
-            r_next,
-            u,
-            T,
-            S,
-            c,
-            polys,
-            taus,
-            evals
-        ) = self.alloc_witness(cs.namespace(|| "allocate the circuit witness"), arity, self.mu, self.deg)?;
+        let (pp_digest, i, z_0, z_i, U, r_i, r_next, u, T, S, c, polys, taus, evals) = self
+            .alloc_witness(
+                cs.namespace(|| "allocate the circuit witness"),
+                arity,
+                self.mu,
+                self.deg,
+            )?;
 
         // Set variable indicating if this is the base case as false permanently to test NIFS verifier
         let zero = alloc_zero(cs.namespace(|| "zero"));
@@ -495,8 +508,7 @@ impl<E: Engine, SC: StepCircuit<E::Base>> NovaAugmentedCircuit<'_, E, SC> {
         )?;
 
         // Outputs the computed hash and u.X[1] that corresponds to the hash of the other circuit
-        u.X1
-            .inputize(cs.namespace(|| "Output unmodified hash of the other circuit"))?;
+        u.X1.inputize(cs.namespace(|| "Output unmodified hash of the other circuit"))?;
         hash.inputize(cs.namespace(|| "output new hash of this circuit"))?;
 
         Ok(z_next)

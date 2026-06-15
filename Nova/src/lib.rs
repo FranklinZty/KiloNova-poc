@@ -4,12 +4,13 @@
   unused,
   future_incompatible,
   nonstandard_style,
-  rust_2018_idioms,
+  rust_2018_idioms
 )]
 #![allow(non_snake_case)]
 #![forbid(unsafe_code)]
 
 // main APIs exposed by this library
+pub mod kilonova;
 pub mod nova;
 
 #[cfg(feature = "experimental")]
@@ -20,9 +21,9 @@ pub mod errors;
 pub mod frontend;
 pub mod gadgets;
 pub mod provider;
+pub mod r1cs;
 pub mod spartan;
 pub mod traits;
-pub mod r1cs;
 
 // private modules
 pub mod constants;
