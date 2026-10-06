@@ -20,10 +20,7 @@ use crate::kilonova::{
 use crate::r1cs::R1CSInstance;
 
 pub mod r1cs;
-use r1cs::{
-  AllocatedFoldedInstance, AllocatedIndexWitness, AllocatedNIFS, AllocatedProjectedWitness,
-  AllocatedR1CSInstance,
-};
+use r1cs::{AllocatedFoldedInstance, AllocatedNIFS, AllocatedR1CSInstance};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -36,12 +33,11 @@ pub struct KiloNovaAugmentedCircuitInputs<E: Engine> {
   local_predicate_id: E::Base,
   incoming_predicate_id: E::Base,
   U: Option<FoldedInstance<E>>,
-  W: Option<Vec<E::Base>>,
-  lambda: Option<Vec<E::Base>>,
   ri: Option<E::Base>,
   r_next: E::Base,
   u: Option<R1CSInstance<E>>,
-  w: Option<Vec<E::Base>>,
+  /// z[0] of the incoming instance; only read by the secondary base case.
+  z_at_zero: Option<E::Base>,
   nifs: Option<NIFS<E>>,
 }
 
@@ -56,12 +52,10 @@ impl<E: Engine> KiloNovaAugmentedCircuitInputs<E> {
     local_predicate_id: E::Base,
     incoming_predicate_id: E::Base,
     U: Option<FoldedInstance<E>>,
-    W: Option<Vec<E::Base>>,
-    lambda: Option<Vec<E::Base>>,
     ri: Option<E::Base>,
     r_next: E::Base,
     u: Option<R1CSInstance<E>>,
-    w: Option<Vec<E::Base>>,
+    z_at_zero: Option<E::Base>,
     nifs: Option<NIFS<E>>,
   ) -> Self {
     Self {
@@ -73,12 +67,10 @@ impl<E: Engine> KiloNovaAugmentedCircuitInputs<E> {
       local_predicate_id,
       incoming_predicate_id,
       U,
-      W,
-      lambda,
       ri,
       r_next,
       u,
-      w,
+      z_at_zero,
       nifs,
     }
   }
@@ -147,12 +139,10 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
       AllocatedNum<E::Base>,
       AllocatedNum<E::Base>,
       AllocatedFoldedInstance<E>,
-      AllocatedProjectedWitness<E>,
-      AllocatedIndexWitness<E>,
       AllocatedNum<E::Base>,
       AllocatedNum<E::Base>,
       AllocatedR1CSInstance<E>,
-      AllocatedProjectedWitness<E>,
+      AllocatedNum<E::Base>,
       AllocatedNIFS<E>,
     ),
     SynthesisError,
@@ -192,19 +182,6 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
       self.inputs.as_ref().and_then(|inputs| inputs.U.as_ref()),
       &self.structure,
     )?;
-    let W = AllocatedProjectedWitness::alloc(
-      cs.namespace(|| "allocate W"),
-      self.inputs.as_ref().and_then(|inputs| inputs.W.as_ref()),
-      self.structure.num_vars_max,
-    )?;
-    let lambda = AllocatedIndexWitness::alloc(
-      cs.namespace(|| "allocate lambda"),
-      self
-        .inputs
-        .as_ref()
-        .and_then(|inputs| inputs.lambda.as_ref()),
-      self.structure.predicates.len(),
-    )?;
     let ri = AllocatedNum::alloc(cs.namespace(|| "ri"), || {
       Ok(self.inputs.get()?.ri.unwrap_or(E::Base::ZERO))
     })?;
@@ -213,11 +190,9 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
       cs.namespace(|| "allocate u"),
       self.inputs.as_ref().and_then(|inputs| inputs.u.as_ref()),
     )?;
-    let w = AllocatedProjectedWitness::alloc(
-      cs.namespace(|| "allocate w"),
-      self.inputs.as_ref().and_then(|inputs| inputs.w.as_ref()),
-      self.structure.num_vars_max,
-    )?;
+    let z_at_zero = AllocatedNum::alloc(cs.namespace(|| "z_at_zero"), || {
+      Ok(self.inputs.get()?.z_at_zero.unwrap_or(E::Base::ZERO))
+    })?;
     let nifs = AllocatedNIFS::alloc(
       cs.namespace(|| "allocate nifs"),
       self.inputs.as_ref().and_then(|inputs| inputs.nifs.as_ref()),
@@ -233,12 +208,10 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
       local_predicate_id,
       incoming_predicate_id,
       U,
-      W,
-      lambda,
       ri,
       r_next,
       u,
-      w,
+      z_at_zero,
       nifs,
     ))
   }
@@ -274,7 +247,7 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
     &self,
     mut cs: CS,
     u: &AllocatedR1CSInstance<E>,
-    w: &AllocatedProjectedWitness<E>,
+    z_at_zero: &AllocatedNum<E::Base>,
   ) -> Result<AllocatedFoldedInstance<E>, SynthesisError> {
     if self.is_primary_circuit {
       AllocatedFoldedInstance::default(cs.namespace(|| "default U"), &self.structure)
@@ -284,7 +257,7 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
         &self.structure,
         self.incoming_predicate_id,
         u,
-        w,
+        z_at_zero,
       )
     }
   }
@@ -296,10 +269,7 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
     pp_digest: &AllocatedNum<E::Base>,
     incoming_predicate_id: &AllocatedNum<E::Base>,
     U: &AllocatedFoldedInstance<E>,
-    W: &AllocatedProjectedWitness<E>,
-    lambda: &AllocatedIndexWitness<E>,
     u: &AllocatedR1CSInstance<E>,
-    w: &AllocatedProjectedWitness<E>,
     nifs: &AllocatedNIFS<E>,
   ) -> Result<AllocatedFoldedInstance<E>, SynthesisError> {
     U.fold_with_r1cs_holographic(
@@ -309,9 +279,6 @@ impl<'a, E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'a, E, P
       self.incoming_predicate_id,
       incoming_predicate_id,
       u,
-      W,
-      lambda,
-      w,
       nifs,
       self.ro_consts.clone(),
     )
@@ -333,12 +300,10 @@ impl<E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'_, E, PS> {
       local_predicate_id,
       incoming_predicate_id,
       U,
-      W,
-      lambda,
       ri,
       r_next,
       u,
-      w,
+      z_at_zero,
       nifs,
     ) = self.alloc_witness(cs.namespace(|| "allocate witness"), arity)?;
 
@@ -372,16 +337,13 @@ impl<E: Engine, PS: PredicateSet<E::Base>> KiloNovaAugmentedCircuit<'_, E, PS> {
     )?;
     let check_hash = alloc_num_equals(cs.namespace(|| "u hash"), &u.X[0], &hash)?;
 
-    let U_base = self.synthesize_base_case(cs.namespace(|| "base"), &u, &w)?;
+    let U_base = self.synthesize_base_case(cs.namespace(|| "base"), &u, &z_at_zero)?;
     let U_non_base = self.synthesize_non_base_case(
       cs.namespace(|| "nonbase"),
       &pp_digest,
       &incoming_predicate_id,
       &U,
-      &W,
-      &lambda,
       &u,
-      &w,
       &nifs,
     )?;
 

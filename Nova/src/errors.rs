@@ -74,6 +74,13 @@ pub enum NovaError {
   /// returned when the prover cannot prove the provided statement due to completeness error
   #[error("InternalError")]
   InternalError,
+  /// returned when the augmented-circuit shape fixed point is not reached within the
+  /// configured iteration / size budget
+  #[error("SetupDidNotConverge: {reason}")]
+  SetupDidNotConverge {
+    /// Per-iteration shape sizes observed before giving up
+    reason: String,
+  },
 }
 
 impl From<SynthesisError> for NovaError {

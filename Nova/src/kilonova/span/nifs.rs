@@ -12,7 +12,10 @@ use ff::Field;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::relation::{FoldedInstance, FoldedWitness, GlobalStructure};
+use super::{
+  super::transcript::{absorb_tag, HFS_TAG_INPUT_SPAN, HFS_TAG_X_CLAIMS, HFS_TAG_Y_CLAIMS},
+  relation::{FoldedInstance, FoldedWitness, GlobalStructure},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -34,15 +37,37 @@ pub struct NIFS<E: Engine> {
 }
 
 impl<E: Engine> NIFS<E> {
-  fn absorb_inputs(
+  /// HFS transcript v1 (span variant), input phase (docs/protocol-spec.md §3):
+  /// `TAG_INPUT_SPAN, pp_digest, predicate_id, U1 (running ACCS incl. public lambda), U2`.
+  /// The incoming index is e_{predicate_id}, fixed by `predicate_id`.
+  pub(crate) fn absorb_inputs(
     ro: &mut E::RO,
     pp_digest: &E::Scalar,
     predicate_id: usize,
+    U1: &FoldedInstance<E>,
     U2: &R1CSInstance<E>,
   ) {
+    absorb_tag::<E>(ro, HFS_TAG_INPUT_SPAN);
     ro.absorb(scalar_as_base::<E>(*pp_digest));
     ro.absorb(E::Base::from(predicate_id as u64));
+    U1.absorb_in_ro(ro);
     U2.absorb_in_ro(ro);
+  }
+
+  /// Binds the X-phase helper claims before `delta` is derived.
+  pub(crate) fn absorb_x_claims(ro: &mut E::RO, sigmas: &[E::Base], taus: &[E::Base]) {
+    absorb_tag::<E>(ro, HFS_TAG_X_CLAIMS);
+    for v in sigmas.iter().chain(taus.iter()) {
+      ro.absorb(*v);
+    }
+  }
+
+  /// Binds the Y-phase helper claims before `rho` is derived.
+  pub(crate) fn absorb_y_claims(ro: &mut E::RO, epsilons: &[E::Base], thetas: &[E::Base]) {
+    absorb_tag::<E>(ro, HFS_TAG_Y_CLAIMS);
+    for v in epsilons.iter().chain(thetas.iter()) {
+      ro.absorb(*v);
+    }
   }
 
   fn bind_table<F: Field>(table: &mut Vec<F>, r: F) {
@@ -98,7 +123,8 @@ impl<E: Engine> NIFS<E> {
     let zero_x_poly = vec![E::Base::ZERO; 4];
     let zero_y_poly = vec![E::Base::ZERO; 3];
     let mut ro = E::RO::new(ro_consts.clone());
-    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, U2);
+    let U1 = FoldedInstance::default(structure);
+    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, &U1, U2);
 
     let _gamma = ro.squeeze(NUM_CHALLENGE_BITS);
     let _alpha = (0..structure.s_max)
@@ -117,6 +143,7 @@ impl<E: Engine> NIFS<E> {
       })
       .collect::<Vec<_>>();
 
+    Self::absorb_x_claims(&mut ro, &[E::Base::ZERO; 3], &[E::Base::ZERO; 3]);
     let _delta = ro.squeeze(NUM_CHALLENGE_BITS);
     let mut point_y = Vec::with_capacity(structure.s_prime_max);
     let polys_y = (0..structure.s_prime_max)
@@ -130,6 +157,7 @@ impl<E: Engine> NIFS<E> {
       })
       .collect::<Vec<_>>();
 
+    Self::absorb_y_claims(&mut ro, &[E::Base::ZERO; 4], &[E::Base::ZERO; 4]);
     let _rho = ro.squeeze(NUM_CHALLENGE_BITS);
 
     Self {
@@ -453,7 +481,7 @@ impl<E: Engine> NIFS<E> {
     let z_new = structure.z_from_r1cs(U2, W2);
 
     let mut ro = E::RO::new(ro_consts.clone());
-    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, U2);
+    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, U1, U2);
 
     let gamma = ro.squeeze(NUM_CHALLENGE_BITS);
     let alpha = (0..structure.s_max)
@@ -472,10 +500,23 @@ impl<E: Engine> NIFS<E> {
     let sc_proof_x = Self::sumcheck_prove_x(
       &mut ro, gamma, &alpha, eq_rx, L0, L1, L2, eq_alpha, Az, Bz, Cz,
     );
+    // Prover-side completeness check: the X sum-check must start from the running claim.
+    // It fails exactly when the incoming R1CS instance does not satisfy the zero-check over
+    // E::Base, which is the case for any instance using non-trivial E::Scalar arithmetic
+    // (known issue B15: the HFS runs over E::Base while the R1CS is defined over E::Scalar).
+    if let Some(first) = sc_proof_x.polys.first() {
+      if first[0] + first[1] != structure.compute_sum_x(U1, gamma) {
+        return Err(NovaError::UnSat {
+          reason: "HFS zero-check failed: incoming instance is not satisfied over E::Base (B15)"
+            .to_string(),
+        });
+      }
+    }
     let r_x_prime = Self::canonical_point(&sc_proof_x.point);
     let sigmas = structure.compute_sigmas(U1, &r_x_prime);
     let taus = structure.compute_taus(predicate_id, &r_x_prime, &z_new);
 
+    Self::absorb_x_claims(&mut ro, &sigmas, &taus);
     let delta = ro.squeeze(NUM_CHALLENGE_BITS);
     let eq_ry = Self::eq_table(&U1.r_y);
     let R0 = Self::col_table_eval_folded(structure, &U1.lambda, 0, &r_x_prime);
@@ -504,6 +545,7 @@ impl<E: Engine> NIFS<E> {
     let epsilons = structure.compute_epsilons(U1, &z_running, &r_x_prime, &r_y_prime);
     let thetas = structure.compute_thetas(predicate_id, &z_new, &r_x_prime, &r_y_prime);
 
+    Self::absorb_y_claims(&mut ro, &epsilons, &thetas);
     let rho_base = ro.squeeze(NUM_CHALLENGE_BITS);
     let rho_scalar = base_as_scalar::<E>(rho_base);
     let v = epsilons
@@ -559,8 +601,17 @@ impl<E: Engine> NIFS<E> {
       return Err(NovaError::InvalidSumcheckProof);
     }
 
+    if U1.X.len() != structure.num_io
+      || U1.lambda.len() != structure.predicates.len()
+      || U1.r_x.len() != structure.s_max
+      || U1.r_y.len() != structure.s_prime_max
+      || U1.v.len() != 4
+    {
+      return Err(NovaError::InvalidInputLength);
+    }
+
     let mut ro = E::RO::new(ro_consts.clone());
-    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, U2);
+    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, U1, U2);
 
     let gamma = ro.squeeze(NUM_CHALLENGE_BITS);
     let alpha = (0..structure.s_max)
@@ -586,6 +637,7 @@ impl<E: Engine> NIFS<E> {
       return Err(NovaError::InvalidSumcheckProof);
     }
 
+    Self::absorb_x_claims(&mut ro, &self.sigmas, &self.taus);
     let delta = ro.squeeze(NUM_CHALLENGE_BITS);
     let sum_y = structure.compute_sum_y(U1, &self.sigmas, &self.taus, delta);
     let (r_y_prime_sumcheck, claim_y) = Self::sumcheck_verify(
@@ -601,6 +653,7 @@ impl<E: Engine> NIFS<E> {
       return Err(NovaError::InvalidSumcheckProof);
     }
 
+    Self::absorb_y_claims(&mut ro, &self.epsilons, &self.thetas);
     let rho_base = ro.squeeze(NUM_CHALLENGE_BITS);
     let rho_scalar = base_as_scalar::<E>(rho_base);
     let v = self
@@ -648,25 +701,25 @@ mod tests {
       4,
       2,
       SparseMatrix::new(
-        &vec![(0, 0, scale), (1, 1, one), (2, 2, one), (3, 3, one)],
+        &[(0, 0, scale), (1, 1, one), (2, 2, one), (3, 3, one)],
         4,
         7,
       ),
       SparseMatrix::new(
-        &vec![(0, 0, one), (1, 1, scale), (2, 2, one), (3, 3, one)],
+        &[(0, 0, one), (1, 1, scale), (2, 2, one), (3, 3, one)],
         4,
         7,
       ),
-      SparseMatrix::new(&vec![(0, 4, one), (1, 5, scale)], 4, 7),
+      SparseMatrix::new(&[(0, 4, one), (1, 5, scale)], 4, 7),
     )
     .unwrap();
     let shape1 = crate::r1cs::R1CSShape::<E>::new(
       8,
       8,
       2,
-      SparseMatrix::new(&vec![(0, 0, one), (1, 1, scale), (4, 4, one)], 8, 11),
-      SparseMatrix::new(&vec![(0, 0, scale), (1, 1, one), (4, 4, one)], 8, 11),
-      SparseMatrix::new(&vec![(0, 8, one), (1, 9, one)], 8, 11),
+      SparseMatrix::new(&[(0, 0, one), (1, 1, scale), (4, 4, one)], 8, 11),
+      SparseMatrix::new(&[(0, 0, scale), (1, 1, one), (4, 4, one)], 8, 11),
+      SparseMatrix::new(&[(0, 8, one), (1, 9, one)], 8, 11),
     )
     .unwrap();
     let ck = shape1.commitment_key(&*default_ck_hint());

@@ -10,7 +10,10 @@ use crate::{
   traits::{commitment::CommitmentTrait, Engine, ROCircuitTrait, ROConstantsCircuit},
 };
 use ff::Field;
-use std::collections::BTreeMap;
+
+use crate::kilonova::transcript::{
+  absorb_domain_tag, HFS_TAG_INPUT_SPAN, HFS_TAG_X_CLAIMS, HFS_TAG_Y_CLAIMS,
+};
 
 use super::super::{
   nifs::{SumcheckProof, NIFS},
@@ -21,11 +24,6 @@ use super::super::{
 pub struct AllocatedR1CSInstance<E: Engine> {
   pub(crate) comm_W: AllocatedPoint<E>,
   pub(crate) X: Vec<AllocatedNum<E::Base>>,
-}
-
-#[derive(Clone)]
-pub struct AllocatedProjectedWitness<E: Engine> {
-  pub(crate) W: Vec<AllocatedNum<E::Base>>,
 }
 
 #[derive(Clone)]
@@ -152,25 +150,6 @@ fn one_minus<E: Engine, CS: ConstraintSystem<E::Base>>(
   Ok(out)
 }
 
-fn eq_eval_bits<E: Engine, CS: ConstraintSystem<E::Base>>(
-  mut cs: CS,
-  bits: &[bool],
-  point: &[AllocatedNum<E::Base>],
-  label: &str,
-) -> Result<AllocatedNum<E::Base>, SynthesisError> {
-  debug_assert_eq!(bits.len(), point.len());
-  let mut acc = alloc_one(cs.namespace(|| format!("{label}_init")));
-  for (i, (bit, r)) in bits.iter().zip(point.iter()).enumerate() {
-    let term = if *bit {
-      r.clone()
-    } else {
-      one_minus::<E, _>(cs.namespace(|| format!("{label}_one_minus_{i}")), r)?
-    };
-    acc = acc.mul(cs.namespace(|| format!("{label}_mul_{i}")), &term)?;
-  }
-  Ok(acc)
-}
-
 fn eq_points<E: Engine, CS: ConstraintSystem<E::Base>>(
   mut cs: CS,
   left: &[AllocatedNum<E::Base>],
@@ -204,153 +183,6 @@ fn powers<E: Engine, CS: ConstraintSystem<E::Base>>(
     out.push(cur.clone());
   }
   Ok(out)
-}
-
-fn eval_matrix_predicate<E: Engine, CS: ConstraintSystem<E::Base>>(
-  mut cs: CS,
-  structure: &GlobalStructure<E>,
-  predicate_id: usize,
-  which: usize,
-  r_x: &[AllocatedNum<E::Base>],
-  r_y: &[AllocatedNum<E::Base>],
-  label: &str,
-) -> Result<AllocatedNum<E::Base>, SynthesisError> {
-  let mut row_cache = BTreeMap::<usize, AllocatedNum<E::Base>>::new();
-  let mut col_cache = BTreeMap::<usize, AllocatedNum<E::Base>>::new();
-  let mut acc = alloc_zero(cs.namespace(|| format!("{label}_zero")));
-
-  for (idx, (row, col, val)) in structure.predicates[predicate_id].mats[which]
-    .iter()
-    .enumerate()
-  {
-    let row_eval = if let Some(cached) = row_cache.get(row) {
-      cached.clone()
-    } else {
-      let eval = eq_eval_bits::<E, _>(
-        cs.namespace(|| format!("{label}_row_eval_{row}")),
-        &GlobalStructure::<E>::bits_le(*row, structure.s_max),
-        r_x,
-        &format!("{label}_row_bits_{row}"),
-      )?;
-      row_cache.insert(*row, eval.clone());
-      eval
-    };
-    let col_eval = if let Some(cached) = col_cache.get(col) {
-      cached.clone()
-    } else {
-      let eval = eq_eval_bits::<E, _>(
-        cs.namespace(|| format!("{label}_col_eval_{col}")),
-        &GlobalStructure::<E>::bits_le(*col, structure.s_prime_max),
-        r_y,
-        &format!("{label}_col_bits_{col}"),
-      )?;
-      col_cache.insert(*col, eval.clone());
-      eval
-    };
-    let eq = row_eval.mul(cs.namespace(|| format!("{label}_eq_{idx}")), &col_eval)?;
-    let term = mul_const::<E, _>(cs.namespace(|| format!("{label}_scaled_{idx}")), &eq, *val)?;
-    acc = acc.add(cs.namespace(|| format!("{label}_acc_{idx}")), &term)?;
-  }
-
-  Ok(acc)
-}
-
-fn eval_matrix_folded<E: Engine, CS: ConstraintSystem<E::Base>>(
-  mut cs: CS,
-  structure: &GlobalStructure<E>,
-  coeffs: &[AllocatedNum<E::Base>],
-  which: usize,
-  r_x: &[AllocatedNum<E::Base>],
-  r_y: &[AllocatedNum<E::Base>],
-  label: &str,
-) -> Result<AllocatedNum<E::Base>, SynthesisError> {
-  let mut acc = alloc_zero(cs.namespace(|| format!("{label}_zero")));
-  for predicate_id in 0..structure.predicates.len() {
-    let eval = eval_matrix_predicate::<E, _>(
-      cs.namespace(|| format!("{label}_predicate_{predicate_id}")),
-      structure,
-      predicate_id,
-      which,
-      r_x,
-      r_y,
-      &format!("{label}_predicate_{predicate_id}"),
-    )?;
-    let term = coeffs[predicate_id].mul(
-      cs.namespace(|| format!("{label}_coeff_mul_{predicate_id}")),
-      &eval,
-    )?;
-    acc = acc.add(
-      cs.namespace(|| format!("{label}_acc_{predicate_id}")),
-      &term,
-    )?;
-  }
-  Ok(acc)
-}
-
-fn eval_row_compression_predicate<E: Engine, CS: ConstraintSystem<E::Base>>(
-  mut cs: CS,
-  structure: &GlobalStructure<E>,
-  predicate_id: usize,
-  which: usize,
-  r_x: &[AllocatedNum<E::Base>],
-  z: &[AllocatedNum<E::Base>],
-  label: &str,
-) -> Result<AllocatedNum<E::Base>, SynthesisError> {
-  let mut row_cache = BTreeMap::<usize, AllocatedNum<E::Base>>::new();
-  let mut acc = alloc_zero(cs.namespace(|| format!("{label}_zero")));
-
-  for (idx, (row, col, val)) in structure.predicates[predicate_id].mats[which]
-    .iter()
-    .enumerate()
-  {
-    let row_eval = if let Some(cached) = row_cache.get(row) {
-      cached.clone()
-    } else {
-      let eval = eq_eval_bits::<E, _>(
-        cs.namespace(|| format!("{label}_row_eval_{row}")),
-        &GlobalStructure::<E>::bits_le(*row, structure.s_max),
-        r_x,
-        &format!("{label}_row_bits_{row}"),
-      )?;
-      row_cache.insert(*row, eval.clone());
-      eval
-    };
-    let scaled_row = mul_const::<E, _>(
-      cs.namespace(|| format!("{label}_scaled_row_{idx}")),
-      &row_eval,
-      *val,
-    )?;
-    let z_col = if let Some(z_col) = z.get(*col) {
-      z_col.clone()
-    } else {
-      alloc_zero(cs.namespace(|| format!("{label}_pad_z_{idx}")))
-    };
-    let term = scaled_row.mul(cs.namespace(|| format!("{label}_term_{idx}")), &z_col)?;
-    acc = acc.add(cs.namespace(|| format!("{label}_acc_{idx}")), &term)?;
-  }
-
-  Ok(acc)
-}
-
-fn eval_z<E: Engine, CS: ConstraintSystem<E::Base>>(
-  mut cs: CS,
-  z: &[AllocatedNum<E::Base>],
-  r_y: &[AllocatedNum<E::Base>],
-  s_prime_max: usize,
-  label: &str,
-) -> Result<AllocatedNum<E::Base>, SynthesisError> {
-  let mut acc = alloc_zero(cs.namespace(|| format!("{label}_zero")));
-  for (idx, value) in z.iter().enumerate() {
-    let eq = eq_eval_bits::<E, _>(
-      cs.namespace(|| format!("{label}_eq_{idx}")),
-      &GlobalStructure::<E>::bits_le(idx, s_prime_max),
-      r_y,
-      &format!("{label}_bits_{idx}"),
-    )?;
-    let term = value.mul(cs.namespace(|| format!("{label}_term_{idx}")), &eq)?;
-    acc = acc.add(cs.namespace(|| format!("{label}_acc_{idx}")), &term)?;
-  }
-  Ok(acc)
 }
 
 fn interpolate<E: Engine, CS: ConstraintSystem<E::Base>>(
@@ -414,27 +246,6 @@ impl<E: Engine> AllocatedR1CSInstance<E> {
     for x in &self.X {
       ro.absorb(x);
     }
-  }
-}
-
-impl<E: Engine> AllocatedProjectedWitness<E> {
-  pub fn alloc<CS: ConstraintSystem<E::Base>>(
-    mut cs: CS,
-    witness: Option<&Vec<E::Base>>,
-    num_vars: usize,
-  ) -> Result<Self, SynthesisError> {
-    let W = (0..num_vars)
-      .map(|i| {
-        AllocatedNum::alloc(cs.namespace(|| format!("w_{i}")), || {
-          Ok(
-            witness
-              .and_then(|w| w.get(i).copied())
-              .unwrap_or(E::Base::ZERO),
-          )
-        })
-      })
-      .collect::<Result<Vec<_>, _>>()?;
-    Ok(Self { W })
   }
 }
 
@@ -529,7 +340,7 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
     structure: &GlobalStructure<E>,
     predicate_id: usize,
     inst: &AllocatedR1CSInstance<E>,
-    witness: &AllocatedProjectedWitness<E>,
+    z_at_zero: &AllocatedNum<E::Base>,
   ) -> Result<Self, SynthesisError> {
     let u = alloc_one(cs.namespace(|| "one"));
     let r_x = (0..structure.s_max)
@@ -542,7 +353,8 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
     let m0 = mul_const::<E, _>(cs.namespace(|| "m0"), &u, predicate.matrix_at_zero[0])?;
     let m1 = mul_const::<E, _>(cs.namespace(|| "m1"), &u, predicate.matrix_at_zero[1])?;
     let m2 = mul_const::<E, _>(cs.namespace(|| "m2"), &u, predicate.matrix_at_zero[2])?;
-    let z_eval = witness.W[0].clone();
+    // z~(0) = z[0] = W[0]: a deferred claim, bound by the decider through comm_W.
+    let z_eval = z_at_zero.clone();
     let lambda = alloc_num_vec::<E, _>(
       cs.namespace(|| "base_lambda"),
       Some(&structure.basis_coeffs_base(predicate_id)),
@@ -599,8 +411,6 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
     predicate_id: usize,
     predicate_id_num: &AllocatedNum<E::Base>,
     u: &AllocatedR1CSInstance<E>,
-    running_w: &AllocatedProjectedWitness<E>,
-    incoming_w: &AllocatedProjectedWitness<E>,
     nifs: &AllocatedNIFS<E>,
     ro_consts: ROConstantsCircuit<E>,
   ) -> Result<Self, SynthesisError> {
@@ -613,9 +423,12 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
       &expected_pred,
     );
 
+    // Transcript (HFS v1, span variant): must match `span::NIFS::absorb_inputs`.
     let mut ro = E::ROCircuit::new(ro_consts);
+    absorb_domain_tag::<E, _>(cs.namespace(|| "tag_input"), &mut ro, HFS_TAG_INPUT_SPAN)?;
     ro.absorb(params);
     ro.absorb(predicate_id_num);
+    self.absorb_in_ro(cs.namespace(|| "absorb running U"), &mut ro)?;
     u.absorb_in_ro(&mut ro);
 
     let gamma_bits = ro.squeeze(cs.namespace(|| "gamma_bits"), NUM_CHALLENGE_BITS)?;
@@ -679,56 +492,10 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
     }
     let r_x_prime = r_x_point.iter().cloned().rev().collect::<Vec<_>>();
 
-    let mut z_running = Vec::with_capacity(running_w.W.len() + 1 + self.X.len());
-    z_running.extend(running_w.W.iter().cloned());
-    z_running.push(self.u.clone());
-    z_running.extend(self.X.iter().cloned());
-    let mut z_new = Vec::with_capacity(incoming_w.W.len() + 1 + u.X.len());
-    z_new.extend(incoming_w.W.iter().cloned());
-    z_new.push(alloc_one(cs.namespace(|| "z_new_one")));
-    z_new.extend(u.X.iter().cloned());
-
-    let sigmas = (0..3)
-      .map(|j| {
-        eval_matrix_folded::<E, _>(
-          cs.namespace(|| format!("sigma_eval_{j}")),
-          structure,
-          &self.lambda,
-          j,
-          &r_x_prime,
-          &self.r_y,
-          &format!("sigma_eval_{j}"),
-        )
-      })
-      .collect::<Result<Vec<_>, _>>()?;
-    for (j, sigma) in sigmas.iter().enumerate() {
-      assert_equal::<E, _>(
-        cs.namespace(|| format!("sigma_match_{j}")),
-        sigma,
-        &nifs.sigmas[j],
-      );
-    }
-
-    let taus = (0..3)
-      .map(|j| {
-        eval_row_compression_predicate::<E, _>(
-          cs.namespace(|| format!("tau_eval_{j}")),
-          structure,
-          predicate_id,
-          j,
-          &r_x_prime,
-          &z_new,
-          &format!("tau_eval_{j}"),
-        )
-      })
-      .collect::<Result<Vec<_>, _>>()?;
-    for (j, tau) in taus.iter().enumerate() {
-      assert_equal::<E, _>(
-        cs.namespace(|| format!("tau_match_{j}")),
-        tau,
-        &nifs.taus[j],
-      );
-    }
+    // sigma/tau are prover messages bound by the transcript and checked via c_x and the
+    // Y sum-check; they are not recomputed from witnesses (see direct gadget, B1/B3).
+    let sigmas = &nifs.sigmas;
+    let taus = &nifs.taus;
 
     let eq_running_rx = eq_points::<E, _>(
       cs.namespace(|| "eq_running_rx"),
@@ -749,6 +516,11 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
     let cx_right = gamma_pows[3].mul(cs.namespace(|| "cx_right"), &eq_alpha_tau)?;
     let cx = cx_left.add(cs.namespace(|| "cx"), &cx_right)?;
     assert_equal::<E, _>(cs.namespace(|| "claim_x_match_cx"), &claim_x, &cx);
+
+    absorb_domain_tag::<E, _>(cs.namespace(|| "tag_x_claims"), &mut ro, HFS_TAG_X_CLAIMS)?;
+    for v in sigmas.iter().chain(taus.iter()) {
+      ro.absorb(v);
+    }
 
     let delta_bits = ro.squeeze(cs.namespace(|| "delta_bits"), NUM_CHALLENGE_BITS)?;
     let delta = le_bits_to_num(cs.namespace(|| "delta"), &delta_bits)?;
@@ -804,61 +576,9 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
     }
     let r_y_prime = r_y_point.iter().cloned().rev().collect::<Vec<_>>();
 
-    let mut epsilons = (0..3)
-      .map(|j| {
-        eval_matrix_folded::<E, _>(
-          cs.namespace(|| format!("epsilon_eval_{j}")),
-          structure,
-          &self.lambda,
-          j,
-          &r_x_prime,
-          &r_y_prime,
-          &format!("epsilon_eval_{j}"),
-        )
-      })
-      .collect::<Result<Vec<_>, _>>()?;
-    epsilons.push(eval_z::<E, _>(
-      cs.namespace(|| "epsilon_z"),
-      &z_running,
-      &r_y_prime,
-      structure.s_prime_max,
-      "epsilon_z",
-    )?);
-    for (j, epsilon) in epsilons.iter().enumerate() {
-      assert_equal::<E, _>(
-        cs.namespace(|| format!("epsilon_match_{j}")),
-        epsilon,
-        &nifs.epsilons[j],
-      );
-    }
-
-    let mut thetas = (0..3)
-      .map(|j| {
-        eval_matrix_predicate::<E, _>(
-          cs.namespace(|| format!("theta_eval_{j}")),
-          structure,
-          predicate_id,
-          j,
-          &r_x_prime,
-          &r_y_prime,
-          &format!("theta_eval_{j}"),
-        )
-      })
-      .collect::<Result<Vec<_>, _>>()?;
-    thetas.push(eval_z::<E, _>(
-      cs.namespace(|| "theta_z"),
-      &z_new,
-      &r_y_prime,
-      structure.s_prime_max,
-      "theta_z",
-    )?);
-    for (j, theta) in thetas.iter().enumerate() {
-      assert_equal::<E, _>(
-        cs.namespace(|| format!("theta_match_{j}")),
-        theta,
-        &nifs.thetas[j],
-      );
-    }
+    // epsilon/theta are deferred evaluation claims folded into the output instance.
+    let epsilons = &nifs.epsilons;
+    let thetas = &nifs.thetas;
 
     let eq_running_ry = eq_points::<E, _>(
       cs.namespace(|| "eq_running_ry"),
@@ -888,6 +608,11 @@ impl<E: Engine> AllocatedFoldedInstance<E> {
       .add(cs.namespace(|| "cy_acc_4"), &cy_5)?
       .add(cs.namespace(|| "cy_acc_5"), &cy_6)?;
     assert_equal::<E, _>(cs.namespace(|| "claim_y_match_cy"), &claim_y, &cy);
+
+    absorb_domain_tag::<E, _>(cs.namespace(|| "tag_y_claims"), &mut ro, HFS_TAG_Y_CLAIMS)?;
+    for v in epsilons.iter().chain(thetas.iter()) {
+      ro.absorb(v);
+    }
 
     let rho_bits = ro.squeeze(cs.namespace(|| "rho_bits"), NUM_CHALLENGE_BITS)?;
     let rho = le_bits_to_num(cs.namespace(|| "rho"), &rho_bits)?;

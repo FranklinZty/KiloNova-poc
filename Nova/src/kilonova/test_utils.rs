@@ -55,8 +55,6 @@ pub(crate) struct DirectSecondaryCase {
   pub(crate) incoming_predicate_id: usize,
   pub(crate) incoming_predicate_id_runtime: PrimaryBase,
   pub(crate) U: direct_relation::FoldedInstance<PrimaryEngine>,
-  pub(crate) W_proj: Vec<PrimaryBase>,
-  pub(crate) lambda: Vec<PrimaryBase>,
   pub(crate) ri: PrimaryBase,
   pub(crate) r_next: PrimaryBase,
   pub(crate) u: R1CSInstance<PrimaryEngine>,
@@ -77,7 +75,6 @@ pub(crate) struct SpanSecondaryCase {
   pub(crate) incoming_predicate_id: usize,
   pub(crate) incoming_predicate_id_runtime: PrimaryBase,
   pub(crate) U: span_relation::FoldedInstance<PrimaryEngine>,
-  pub(crate) W_proj: Vec<PrimaryBase>,
   pub(crate) ri: PrimaryBase,
   pub(crate) r_next: PrimaryBase,
   pub(crate) u: R1CSInstance<PrimaryEngine>,
@@ -133,18 +130,18 @@ fn tiny_nonuniform_base_data<E: Engine>(num_predicates: usize) -> TinyBaseData<E
     2,
     2,
     2,
-    SparseMatrix::new(&vec![], 2, 5),
-    SparseMatrix::new(&vec![], 2, 5),
-    SparseMatrix::new(&vec![], 2, 5),
+    SparseMatrix::new(&[], 2, 5),
+    SparseMatrix::new(&[], 2, 5),
+    SparseMatrix::new(&[], 2, 5),
   )
   .unwrap();
   let shape1 = R1CSShape::<E>::new(
     4,
     4,
     2,
-    SparseMatrix::new(&vec![], 4, 7),
-    SparseMatrix::new(&vec![], 4, 7),
-    SparseMatrix::new(&vec![], 4, 7),
+    SparseMatrix::new(&[], 4, 7),
+    SparseMatrix::new(&[], 4, 7),
+    SparseMatrix::new(&[], 4, 7),
   )
   .unwrap();
   let shapes = (0..num_predicates)
@@ -281,8 +278,6 @@ fn build_direct_secondary_case_with_predicates_inner(num_predicates: usize) -> D
     incoming_predicate_id,
     incoming_predicate_id_runtime: PrimaryBase::from(incoming_predicate_id as u64),
     U: running_u,
-    W_proj: running_w.W_proj.clone(),
-    lambda: running_w.lambda_proj.clone(),
     ri: base.ri,
     r_next: base.r_next,
     u: incoming_u,
@@ -360,7 +355,6 @@ fn build_span_secondary_case_with_predicates_inner(num_predicates: usize) -> Spa
     incoming_predicate_id,
     incoming_predicate_id_runtime: PrimaryBase::from(incoming_predicate_id as u64),
     U: running_u,
-    W_proj: running_w.W_proj.clone(),
     ri: base.ri,
     r_next: base.r_next,
     u: incoming_u,
@@ -389,12 +383,10 @@ pub(crate) fn synthesize_secondary_direct<CS: ConstraintSystem<PrimaryBase>>(
     case.local_predicate_id,
     case.incoming_predicate_id_runtime,
     Some(case.U.clone()),
-    Some(case.W_proj.clone()),
-    Some(case.lambda.clone()),
     Some(case.ri),
     case.r_next,
     Some(case.u.clone()),
-    Some(case.w_proj.clone()),
+    case.w_proj.first().copied(),
     Some(case.nifs.clone()),
   );
   let circuit: DirectCircuit<'_, PrimaryEngine, _> = DirectCircuit::new(
@@ -423,11 +415,10 @@ pub(crate) fn synthesize_secondary_span<CS: ConstraintSystem<PrimaryBase>>(
     case.local_predicate_id,
     case.incoming_predicate_id_runtime,
     Some(case.U.clone()),
-    Some(case.W_proj.clone()),
     Some(case.ri),
     case.r_next,
     Some(case.u.clone()),
-    Some(case.w_proj.clone()),
+    case.w_proj.first().copied(),
     Some(case.nifs.clone()),
   );
   let circuit: SpanCircuit<'_, PrimaryEngine, _> = SpanCircuit::new(
@@ -640,6 +631,70 @@ mod tests {
   };
 
   type S = RelaxedR1CSSNARK<SecondaryEngine, EvaluationEngine<SecondaryEngine>>;
+
+  /// Cross-implementation transcript test (P0.3): the in-circuit HFS verifier must derive the
+  /// same challenges (gamma, alpha, delta, rho, sum-check points) as the native verifier.
+  /// The sum-check point checks are constraints; rho is checked here by recomputing the
+  /// circuit's output hash from the *native* folded instance.
+  fn expected_output_hash<U: AbsorbInROTrait<PrimaryEngine>>(
+    pp_digest: PrimaryScalar,
+    i: PrimaryBase,
+    z0: &[PrimaryBase],
+    zi: &[PrimaryBase],
+    folded_u: &U,
+    r_next: PrimaryBase,
+    trace_digest_in: PrimaryBase,
+    incoming_predicate_id: usize,
+  ) -> PrimaryBase {
+    compute_augmented_input_hash(
+      &ROConstants::<PrimaryEngine>::default(),
+      pp_digest,
+      i + PrimaryBase::ONE,
+      z0,
+      zi,
+      folded_u,
+      r_next,
+      super::super::update_trace_digest(trace_digest_in, incoming_predicate_id),
+    )
+  }
+
+  #[test]
+  fn test_transcript_native_matches_gadget_direct() {
+    use crate::frontend::{solver::SatisfyingAssignment, ConstraintSystem};
+    let case = build_direct_secondary_case();
+    let mut cs = SatisfyingAssignment::<SecondaryEngine>::new();
+    synthesize_secondary_direct(&case, &mut cs).unwrap();
+    let expected = expected_output_hash(
+      case.pp_digest,
+      case.i,
+      &case.z0,
+      &case.zi,
+      &case.folded_u,
+      case.r_next,
+      case.trace_digest_in,
+      case.incoming_predicate_id,
+    );
+    assert_eq!(cs.inputs_slice()[2], expected);
+  }
+
+  #[test]
+  fn test_transcript_native_matches_gadget_span() {
+    use crate::frontend::{solver::SatisfyingAssignment, ConstraintSystem};
+    let case = build_span_secondary_case();
+    let mut cs = SatisfyingAssignment::<SecondaryEngine>::new();
+    synthesize_secondary_span(&case, &mut cs).unwrap();
+    let expected = expected_output_hash(
+      case.pp_digest,
+      case.i,
+      &case.z0,
+      &case.zi,
+      &case.folded_u,
+      case.r_next,
+      case.trace_digest_in,
+      case.incoming_predicate_id,
+    );
+    assert_eq!(cs.inputs_slice()[2], expected);
+  }
 
   #[test]
   fn test_direct_secondary_single_step_snark_roundtrip() {

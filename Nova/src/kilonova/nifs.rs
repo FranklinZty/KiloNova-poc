@@ -12,7 +12,10 @@ use ff::Field;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::relation::{FoldedInstance, FoldedWitness, GlobalStructure};
+use super::{
+  relation::{FoldedInstance, FoldedWitness, GlobalStructure},
+  transcript::{absorb_tag, HFS_TAG_INPUT, HFS_TAG_X_CLAIMS, HFS_TAG_Y_CLAIMS},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -34,18 +37,40 @@ pub struct NIFS<E: Engine> {
 }
 
 impl<E: Engine> NIFS<E> {
-  fn absorb_inputs(
+  /// HFS transcript v1, input phase (docs/protocol-spec.md §3):
+  /// `TAG_INPUT, pp_digest, predicate_id, U1 (running ACCS incl. iota' = comm_M), U2, iota`.
+  /// Mirrored by `AllocatedFoldedInstance::fold_with_r1cs_holographic`.
+  pub(crate) fn absorb_inputs(
     ro: &mut E::RO,
     pp_digest: &E::Scalar,
     predicate_id: usize,
     structure: &GlobalStructure<E>,
+    U1: &FoldedInstance<E>,
     U2: &R1CSInstance<E>,
   ) {
+    absorb_tag::<E>(ro, HFS_TAG_INPUT);
     ro.absorb(scalar_as_base::<E>(*pp_digest));
     ro.absorb(E::Base::from(predicate_id as u64));
+    U1.absorb_in_ro(ro);
     U2.absorb_in_ro(ro);
     for comm in &structure.predicate_commitments(predicate_id) {
       comm.absorb_in_ro(ro);
+    }
+  }
+
+  /// Binds the X-phase helper claims before `delta` is derived.
+  pub(crate) fn absorb_x_claims(ro: &mut E::RO, sigmas: &[E::Base], taus: &[E::Base]) {
+    absorb_tag::<E>(ro, HFS_TAG_X_CLAIMS);
+    for v in sigmas.iter().chain(taus.iter()) {
+      ro.absorb(*v);
+    }
+  }
+
+  /// Binds the Y-phase helper claims before `rho` is derived.
+  pub(crate) fn absorb_y_claims(ro: &mut E::RO, epsilons: &[E::Base], thetas: &[E::Base]) {
+    absorb_tag::<E>(ro, HFS_TAG_Y_CLAIMS);
+    for v in epsilons.iter().chain(thetas.iter()) {
+      ro.absorb(*v);
     }
   }
 
@@ -102,7 +127,8 @@ impl<E: Engine> NIFS<E> {
     let zero_x_poly = vec![E::Base::ZERO; 4];
     let zero_y_poly = vec![E::Base::ZERO; 3];
     let mut ro = E::RO::new(ro_consts.clone());
-    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, structure, U2);
+    let U1 = FoldedInstance::default(structure);
+    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, structure, &U1, U2);
 
     let _gamma = ro.squeeze(NUM_CHALLENGE_BITS);
     let _alpha = (0..structure.s_max)
@@ -121,6 +147,7 @@ impl<E: Engine> NIFS<E> {
       })
       .collect::<Vec<_>>();
 
+    Self::absorb_x_claims(&mut ro, &[E::Base::ZERO; 3], &[E::Base::ZERO; 3]);
     let _delta = ro.squeeze(NUM_CHALLENGE_BITS);
     let mut point_y = Vec::with_capacity(structure.s_prime_max);
     let polys_y = (0..structure.s_prime_max)
@@ -134,6 +161,7 @@ impl<E: Engine> NIFS<E> {
       })
       .collect::<Vec<_>>();
 
+    Self::absorb_y_claims(&mut ro, &[E::Base::ZERO; 4], &[E::Base::ZERO; 4]);
     let _rho = ro.squeeze(NUM_CHALLENGE_BITS);
 
     Self {
@@ -457,7 +485,7 @@ impl<E: Engine> NIFS<E> {
     let z_new = structure.z_from_r1cs(U2, W2);
 
     let mut ro = E::RO::new(ro_consts.clone());
-    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, structure, U2);
+    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, structure, U1, U2);
 
     let gamma = ro.squeeze(NUM_CHALLENGE_BITS);
     let alpha = (0..structure.s_max)
@@ -476,10 +504,23 @@ impl<E: Engine> NIFS<E> {
     let sc_proof_x = Self::sumcheck_prove_x(
       &mut ro, gamma, &alpha, eq_rx, L0, L1, L2, eq_alpha, Az, Bz, Cz,
     );
+    // Prover-side completeness check: the X sum-check must start from the running claim.
+    // It fails exactly when the incoming R1CS instance does not satisfy the zero-check over
+    // E::Base, which is the case for any instance using non-trivial E::Scalar arithmetic
+    // (known issue B15: the HFS runs over E::Base while the R1CS is defined over E::Scalar).
+    if let Some(first) = sc_proof_x.polys.first() {
+      if first[0] + first[1] != structure.compute_sum_x(U1, gamma) {
+        return Err(NovaError::UnSat {
+          reason: "HFS zero-check failed: incoming instance is not satisfied over E::Base (B15)"
+            .to_string(),
+        });
+      }
+    }
     let r_x_prime = Self::canonical_point(&sc_proof_x.point);
     let sigmas = structure.compute_sigmas(W1, U1, &r_x_prime);
     let taus = structure.compute_taus(predicate_id, &r_x_prime, &z_new);
 
+    Self::absorb_x_claims(&mut ro, &sigmas, &taus);
     let delta = ro.squeeze(NUM_CHALLENGE_BITS);
     let eq_ry = Self::eq_table(&U1.r_y);
     let R0 = Self::col_table_eval_folded(structure, &W1.lambda_proj, 0, &r_x_prime);
@@ -508,6 +549,7 @@ impl<E: Engine> NIFS<E> {
     let epsilons = structure.compute_epsilons(W1, U1, &z_running, &r_x_prime, &r_y_prime);
     let thetas = structure.compute_thetas(predicate_id, &z_new, &r_x_prime, &r_y_prime);
 
+    Self::absorb_y_claims(&mut ro, &epsilons, &thetas);
     let rho_base = ro.squeeze(NUM_CHALLENGE_BITS);
     let rho_scalar = base_as_scalar::<E>(rho_base);
     let v = epsilons
@@ -563,8 +605,16 @@ impl<E: Engine> NIFS<E> {
       return Err(NovaError::InvalidSumcheckProof);
     }
 
+    if U1.X.len() != structure.num_io
+      || U1.r_x.len() != structure.s_max
+      || U1.r_y.len() != structure.s_prime_max
+      || U1.v.len() != 4
+    {
+      return Err(NovaError::InvalidInputLength);
+    }
+
     let mut ro = E::RO::new(ro_consts.clone());
-    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, structure, U2);
+    Self::absorb_inputs(&mut ro, pp_digest, predicate_id, structure, U1, U2);
 
     let gamma = ro.squeeze(NUM_CHALLENGE_BITS);
     let alpha = (0..structure.s_max)
@@ -590,6 +640,7 @@ impl<E: Engine> NIFS<E> {
       return Err(NovaError::InvalidSumcheckProof);
     }
 
+    Self::absorb_x_claims(&mut ro, &self.sigmas, &self.taus);
     let delta = ro.squeeze(NUM_CHALLENGE_BITS);
     let sum_y = structure.compute_sum_y(U1, &self.sigmas, &self.taus, delta);
     let (r_y_prime_sumcheck, claim_y) = Self::sumcheck_verify(
@@ -605,6 +656,7 @@ impl<E: Engine> NIFS<E> {
       return Err(NovaError::InvalidSumcheckProof);
     }
 
+    Self::absorb_y_claims(&mut ro, &self.epsilons, &self.thetas);
     let rho_base = ro.squeeze(NUM_CHALLENGE_BITS);
     let rho_scalar = base_as_scalar::<E>(rho_base);
     let v = self
@@ -652,25 +704,25 @@ mod tests {
       4,
       2,
       SparseMatrix::new(
-        &vec![(0, 0, scale), (1, 1, one), (2, 2, one), (3, 3, one)],
+        &[(0, 0, scale), (1, 1, one), (2, 2, one), (3, 3, one)],
         4,
         7,
       ),
       SparseMatrix::new(
-        &vec![(0, 0, one), (1, 1, scale), (2, 2, one), (3, 3, one)],
+        &[(0, 0, one), (1, 1, scale), (2, 2, one), (3, 3, one)],
         4,
         7,
       ),
-      SparseMatrix::new(&vec![(0, 4, one), (1, 5, scale)], 4, 7),
+      SparseMatrix::new(&[(0, 4, one), (1, 5, scale)], 4, 7),
     )
     .unwrap();
     let shape1 = crate::r1cs::R1CSShape::<E>::new(
       8,
       8,
       2,
-      SparseMatrix::new(&vec![(0, 0, one), (1, 1, scale), (4, 4, one)], 8, 11),
-      SparseMatrix::new(&vec![(0, 0, scale), (1, 1, one), (4, 4, one)], 8, 11),
-      SparseMatrix::new(&vec![(0, 8, one), (1, 9, one)], 8, 11),
+      SparseMatrix::new(&[(0, 0, one), (1, 1, scale), (4, 4, one)], 8, 11),
+      SparseMatrix::new(&[(0, 0, scale), (1, 1, one), (4, 4, one)], 8, 11),
+      SparseMatrix::new(&[(0, 8, one), (1, 9, one)], 8, 11),
     )
     .unwrap();
     let ck = shape1.commitment_key(&*default_ck_hint());
@@ -766,5 +818,133 @@ mod tests {
     assert!(tampered_theta
       .verify(&ro_consts, &pp_digest, &S, 1, &U1, &U2)
       .is_err());
+  }
+
+  /// B4: the running instance U1 (including its index commitment iota' = comm_M) is bound
+  /// by the transcript, so a proof made for one running instance is rejected for another.
+  #[test]
+  fn test_nifs_rejects_substituted_running_instance() {
+    let (S, ck, U0, W0, U2, W2) = tiny_r1cs::<PallasEngine>(<PallasEngine as Engine>::Scalar::ONE);
+    let U1 = super::super::relation::FoldedInstance::from_r1cs_instance_witness(&S, 0, &U0, &W0);
+    let W1 = super::super::relation::FoldedWitness::from_r1cs_witness(&S, 0, &W0);
+    let ro_consts = ROConstants::<PallasEngine>::default();
+    let pp_digest = <PallasEngine as Engine>::Scalar::ZERO;
+    let (nifs, _) = NIFS::prove(&ck, &ro_consts, &pp_digest, &S, 1, &U1, &W1, &U2, &W2).unwrap();
+
+    let mut other_x = U1.clone();
+    other_x.X[0] += <PallasEngine as Engine>::Base::ONE;
+    assert!(nifs
+      .verify(&ro_consts, &pp_digest, &S, 1, &other_x, &U2)
+      .is_err());
+
+    let mut other_index = U1.clone();
+    other_index.comm_M = S.predicate_commitments(1);
+    assert!(nifs
+      .verify(&ro_consts, &pp_digest, &S, 1, &other_index, &U2)
+      .is_err());
+
+    let mut other_comm_w = U1.clone();
+    other_comm_w.comm_W = U1.comm_W + U1.comm_W;
+    assert!(nifs
+      .verify(&ro_consts, &pp_digest, &S, 1, &other_comm_w, &U2)
+      .is_err());
+  }
+
+  /// B16: epsilon/theta are absorbed before rho. Changing (epsilon_0, theta_0) jointly so
+  /// that the final Y check c_y still holds must change rho (or be rejected); otherwise a
+  /// prover could choose the claims after seeing rho.
+  #[test]
+  fn test_nifs_rho_binds_y_claims() {
+    let (S, ck, U0, W0, U2, W2) = tiny_r1cs::<PallasEngine>(<PallasEngine as Engine>::Scalar::ONE);
+    let U1 = super::super::relation::FoldedInstance::from_r1cs_instance_witness(&S, 0, &U0, &W0);
+    let W1 = super::super::relation::FoldedWitness::from_r1cs_witness(&S, 0, &W0);
+    let ro_consts = ROConstants::<PallasEngine>::default();
+    let pp_digest = <PallasEngine as Engine>::Scalar::ZERO;
+    let (nifs, (folded_u, _)) =
+      NIFS::prove(&ck, &ro_consts, &pp_digest, &S, 1, &U1, &W1, &U2, &W2).unwrap();
+
+    // Recover delta and r_y' exactly as the verifier does.
+    let mut ro = <PallasEngine as Engine>::RO::new(ro_consts.clone());
+    NIFS::<PallasEngine>::absorb_inputs(&mut ro, &pp_digest, 1, &S, &U1, &U2);
+    let _gamma = ro.squeeze(NUM_CHALLENGE_BITS);
+    for _ in 0..S.s_max {
+      let _ = ro.squeeze(NUM_CHALLENGE_BITS);
+    }
+    for poly in &nifs.sc_proof_x.polys {
+      for e in poly {
+        ro.absorb(*e);
+      }
+      let _ = ro.squeeze(NUM_CHALLENGE_BITS);
+    }
+    NIFS::<PallasEngine>::absorb_x_claims(&mut ro, &nifs.sigmas, &nifs.taus);
+    let delta = ro.squeeze(NUM_CHALLENGE_BITS);
+    let r_y_prime = NIFS::<PallasEngine>::canonical_point(&nifs.sc_proof_y.point);
+    let eq_ry = U1.r_y.iter().zip(r_y_prime.iter()).fold(
+      <PallasEngine as Engine>::Base::ONE,
+      |acc, (a, b)| {
+        acc
+          * (*a * *b
+            + (<PallasEngine as Engine>::Base::ONE - *a)
+              * (<PallasEngine as Engine>::Base::ONE - *b))
+      },
+    );
+
+    // c_y contains eq_ry * epsilon_0 + delta^4 * theta_0 * theta_3; keep it invariant.
+    let d_theta = <PallasEngine as Engine>::Base::from(5u64);
+    let d_eps = -(delta.pow_vartime([4]) * nifs.thetas[3] * d_theta)
+      * Option::<<PallasEngine as Engine>::Base>::from(eq_ry.invert()).unwrap();
+    let mut forged = nifs.clone();
+    forged.epsilons[0] += d_eps;
+    forged.thetas[0] += d_theta;
+
+    // Before the B16 fix rho did not depend on (epsilon, theta), so the forged proof was
+    // accepted with the *same* rho. Now rho (hence u = u1 + rho) must change.
+    match forged.verify(&ro_consts, &pp_digest, &S, 1, &U1, &U2) {
+      Err(_) => {}
+      Ok(u) => assert_ne!(u.u, folded_u.u, "rho does not bind epsilon/theta"),
+    }
+  }
+
+  /// Known issue B15 (regression evidence, flip the assertion once fixed): the HFS runs over
+  /// `E::Base` on projected witnesses, while the R1CS is defined over `E::Scalar`. An R1CS
+  /// instance that is satisfied over `E::Scalar` but uses a negative coefficient (here
+  /// `(w0 - w1) * 1 = 0`) and a wrapping product (`w0 * w0 = x0`) cannot be folded.
+  #[test]
+  fn test_known_issue_b15_scalar_r1cs_not_foldable_over_base() {
+    type E = PallasEngine;
+    type F = <E as Engine>::Scalar;
+    let one = F::ONE;
+    let shape = crate::r1cs::R1CSShape::<E>::new(
+      2,
+      2,
+      2,
+      SparseMatrix::new(&[(0, 0, one), (0, 1, -one), (1, 0, one)], 2, 5),
+      SparseMatrix::new(&[(0, 2, one), (1, 0, one)], 2, 5),
+      SparseMatrix::new(&[(1, 3, one)], 2, 5),
+    )
+    .unwrap();
+    let ck = shape.commitment_key(&*default_ck_hint());
+    let x = F::from(1u64 << 63).pow_vartime([4]) + F::from(7u64);
+    let W = R1CSWitness::<E> {
+      W: vec![x, x],
+      r_W: F::ZERO,
+    };
+    let U = R1CSInstance::<E> {
+      comm_W: crate::CE::<E>::commit(&ck, &W.W, &W.r_W),
+      X: vec![x * x, F::ZERO],
+    };
+    // Satisfied over E::Scalar ...
+    assert!(shape.is_sat(&ck, &U, &W).is_ok());
+
+    // ... but the holographic fold over E::Base rejects it.
+    let S = GlobalStructure::new(&[shape]);
+    let U1 = super::super::relation::FoldedInstance::from_r1cs_instance_witness(&S, 0, &U, &W);
+    let W1 = super::super::relation::FoldedWitness::from_r1cs_witness(&S, 0, &W);
+    let ro_consts = ROConstants::<E>::default();
+    let res = NIFS::prove(&ck, &ro_consts, &F::ZERO, &S, 0, &U1, &W1, &U, &W);
+    assert!(
+      res.is_err(),
+      "B15 appears fixed: update this test and docs/baseline-status.md"
+    );
   }
 }

@@ -1,3 +1,9 @@
 /target
 /NIFS-circuit/target
 /Nova/target
+/folding/target
+.DS_Store
+.idea/
+.vscode/
+*.iml
+/results/raw/*.tmp

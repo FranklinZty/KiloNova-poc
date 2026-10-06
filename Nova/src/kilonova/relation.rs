@@ -71,8 +71,11 @@ impl<E: Engine> GlobalStructure<E> {
     Self::build(shapes, true)
   }
 
+  /// Structure used inside the `setup` fixed point: dimensions, index commitments and
+  /// `matrix_at_zero` only. The augmented circuits never read the sparse tables, so they
+  /// are not materialized here (memory, B2).
   pub fn new_for_setup(shapes: &[R1CSShape<E>]) -> Self {
-    Self::build(shapes, true)
+    Self::build(shapes, false)
   }
 
   fn build(shapes: &[R1CSShape<E>], with_runtime_tables: bool) -> Self {

@@ -1,0 +1,43 @@
+# Common parameter contract, P0 freeze (2026-10-05).
+# Values are what the code hard-codes today, not the general symbols of PLAN.md §5.1.
+# P3 generalises [protocol]; P9's pilot freezes [machine.experiments].
+
+[protocol]
+version          = 1          # HFS transcript v1 (Nova/src/kilonova/transcript.rs)
+t                = 3          # relation.rs compute_v_from_coeffs returns t+1 = 4 claims
+d                = 2          # R1CS
+mu               = 1          # running ACCS per fold
+nu               = 1          # incoming CCCS per fold
+num_io           = 2          # kilonova/mod.rs setup enforces
+deg_x            = 3          # X-round evaluations at {0,1,2,3} = d+1
+deg_y            = 2          # Y-round evaluations at {0,1,2}
+gamma_powers     = [0, 1, 2, 3]            # running M0..M2, zero-check (docs/protocol-spec.md N7)
+delta_powers     = [0, 1, 2, 3, 4, 5, 6]   # running M0..M2, running z, new M0..M2 (N8)
+fold_field       = "E::Base"  # KNOWN ISSUE B15: must become the instance's native field in P3
+
+[setup]
+max_iterations   = 12         # kilonova::MAX_SETUP_ITERATIONS
+max_constraints  = 1048576    # kilonova::MAX_SETUP_CONSTRAINTS (2^20)
+
+[crypto]
+curves             = "Pallas/Vesta"   # BN254/Grumpkin re-evaluated at the P3.0 decision
+num_challenge_bits = 128
+num_hash_bits      = 250
+bn_limb_width      = 64
+bn_n_limbs         = 4
+witness_commitment = "Pedersen (provider::pedersen)"
+pcs                = "IPA (provider::ipa_pc::EvaluationEngine), single-step test only"
+ro                 = "Poseidon with domain tags (transcript.rs)"
+zero_knowledge     = false
+
+[machine.dev]                 # correctness work only; never used for formal timings
+ram_gb           = 16
+test_threads     = 1          # required on 16 GB
+profile          = "release"  # debug builds are too slow for setup tests
+
+[machine.experiments]         # PLAN.md §5.2; to be frozen at the P9 pilot
+host             = "TBD: dedicated Linux bare metal or pinned VM, >= 64 GB RAM"
+mem_cap_fraction = 0.8
+timeout_min      = 30
+threads_main     = 1
+seeds            = [101, 202, 303]
