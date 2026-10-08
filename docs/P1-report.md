@@ -1,6 +1,6 @@
 # P1 acceptance report: minimal experiment harness
 
-Date: 2026-10-07. Plan: `docs/P1-plan.md`. Base commit: `72f9596` (P0) plus the uncommitted P1 changes. The records therefore say `implementation_dirty: true`. Fill `versions.lock` `p1_commit` after committing.
+Date: 2026-10-07. Plan: `docs/P1-plan.md`. Base commit: `72f9596` (P0) plus the uncommitted P1 changes. The records therefore say `implementation_dirty: true`. P1 is committed as `c9674cdac4565a01883f1aa2349e801e1717ed85` (`versions.lock` `p1_commit`); the records predate the commit, hence `implementation_dirty: true`.
 
 ## 1. Goal
 

@@ -7,7 +7,7 @@ normative_impl      = "Nova/src/kilonova"           # docs/protocol-spec.md §0
 hfs_transcript      = 1                             # Nova/src/kilonova/transcript.rs
 workspace_members   = ["NIFS-circuit", "Nova", "tools/kn-run"]  # folding/ is excluded (own Cargo.lock); kn-run added in P1
 p0_commit           = "72f9596336a15aad7d54c8f5a3dc4e2fe59d74fe"
-p1_commit           = "TO FILL: git rev-parse HEAD after committing the P1 changes"
+p1_commit           = "c9674cdac4565a01883f1aa2349e801e1717ed85"
 
 [toolchain]
 pinned              = "1.92.0"                      # rust-toolchain.toml; measured in docs/P0-plan.md
