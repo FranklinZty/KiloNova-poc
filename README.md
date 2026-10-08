@@ -34,3 +34,27 @@ Status as of 2026-10-05. Details are in `PLAN.md` and `docs/baseline-status.md`.
 ```bash
 cargo test -p nova-snark --release --lib kilonova -- --test-threads=1
 ```
+
+## Experiment harness (P1)
+
+`tools/kn-run` runs one named scenario or one test in a fresh process and appends one JSON record per run to `results/raw/<experiment>.jsonl`. The record layout is `results/schema.json` (PLAN.md §8), and the plan and acceptance report are `docs/P1-plan.md` and `docs/P1-report.md`.
+
+```bash
+cargo build -p kn-run --release
+target/release/kn-run selfcheck                       # P1 acceptance checks (~30 min; --quick skips proving)
+target/release/kn-run scenario constraints variant=direct --experiment demo
+target/release/kn-run scenario bootstrap variant=span --seed 202
+target/release/kn-run test kilonova::tests::test_setup_fixed_point_converges
+```
+
+Scenarios: `noop`, `sleep ms=N`, `alloc bytes=N`, `fail` (harness calibration), plus `constraints`, `bootstrap` and `chain steps=T` with `variant=direct|span` on the K=3 example family. `chain` with T ≥ 2 currently fails on B15, and that failure is recorded.
+
+Conventions:
+
+- Every run gets a record with a status: `success`, `failure`, `timeout` (killed by `--timeout-s`, default 1800) or `oom`. A field that does not apply is `null` with an entry in `null_reasons`; it is never 0.
+- `wall_ms` and `peak_rss_bytes` are measured by the runner (spawn to reap, `wait4` `ru_maxrss`), so `wall_ms` includes process start-up. On macOS the first exec of a freshly built binary takes about 0.6–1 s, so discard or warm up the first run. `setup_ms`, `recursive_ms` (`RecursiveSNARK::new` plus all `prove_step` calls) and `verify_warm_ms` are in-process timers around exactly that call. `witness_ms` is null because witness generation is inside `recursive_ms`.
+- `threads` is the child's actual rayon thread count. `--threads` sets `RAYON_NUM_THREADS` (default 1, the PLAN.md §5.1 main setting).
+- `input_digest` and `result_digest` hash the semantic inputs and outputs (seeded z0 and trace; pp digest, shape sizes, outputs). Two runs of the same configuration must agree on both, and on `config_hash`.
+- `--mem-cap-mb` is enforced with `RLIMIT_AS` on Linux only; records say `mem_cap_enforced`.
+- Raw child stdout/stderr are kept in `results/raw/logs/<run_id>.{out,err}`. Records are append-only.
+- Laptop numbers are development data only. Formal runs happen on the dedicated host (PLAN.md §5.2).

@@ -1,0 +1,18 @@
+[package]
+name = "kn-run"
+version = "0.1.0"
+edition = "2021"
+description = "KiloNova P1 experiment harness: process-isolated runner with JSONL records"
+publish = false
+
+[dependencies]
+nova-snark = { path = "../../Nova" }
+ff = "0.13.0"
+rand_chacha = "0.3"
+rand_core = "0.6"
+rayon = "1.10"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10.7"
+bincode = { version = "2", features = ["serde", "std"] }
+libc = "0.2"

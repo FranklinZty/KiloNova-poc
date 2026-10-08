@@ -1,0 +1,1 @@
+KN-RESULT {"details":{"args":{},"threads_actual":1},"error":"unknown scenario 'no-such-scenario'","fields":{"build_flags":"profile=release; RUSTFLAGS=","protocol_version":1,"security_profile":"pallas/vesta; pedersen; poseidon RO; challenge 128 bits; hash 250 bits; non-ZK","transcript_version":1},"null_reasons":{},"ok":false}

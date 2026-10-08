@@ -2,7 +2,7 @@
 
 Version: 2026-10-05 (revision 2). Supersedes the 2026-09-21 plan, whose original Chinese text is kept in `docs/PLAN.zh.md`.
 
-Status: P0 executed (see §0 and `docs/baseline-status.md`). P1–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
+Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
 
 ## 0. What changed in this revision, and why
 
@@ -75,7 +75,10 @@ Exit status: met, with B15 recorded as an open blocker. The acceptance items fro
 - Key tests can be re-run, and missing capabilities are listed as gaps: ✅
 - Open correctness or security issues are listed as blockers: ✅ B15, plus G2–G4, which move to P4/P6/P7.
 
-### P1: Minimal experiment harness (2–3 days; depends on P0; may run alongside P3)
+### P1: Minimal experiment harness (done 2026-10-07; 2–3 days; depends on P0; may run alongside P3)
+
+Delivered: `tools/kn-run` (`kn-run` runner + `kn-scenario` child), `results/schema.json`, `SetupReport`/`predicate_constraint_counts`, README section. Detailed plan `docs/P1-plan.md`, report `docs/P1-report.md`. Open: OOM classification is verified only on Linux, which has not been run yet.
+
 
 Goal: every later report uses the same measurement conventions from day one, without building the full bench-runner yet.
 
@@ -271,7 +274,7 @@ Acceptance:
 | Period | Days | Critical path | Notes |
 |---|---|---|---|
 | P0 | done | — | |
-| P1 | 2–3 | no | may run alongside P2/P3 |
+| P1 | done | no | |
 | P2 | 5–8 | yes | |
 | P3 (incl. P3.0) | 10–16 | yes | D1 decided here |
 | P4 | 5–8 | yes | |
@@ -294,7 +297,7 @@ KiloNova-poc/
   Nova/src/kilonova/        # normative HFS (Direct) + span/ (Span ablation)
     relation.rs nifs.rs transcript.rs circuit/ span/ test_utils.rs
   <new> ccs/                # P2: NativeCcsBuilder, ACCS reference checker (same field types)
-  <new> tools/kn-run        # P1: process-isolated runner, JSONL output
+  tools/kn-run              # P1: process-isolated runner, JSONL output
   folding/                  # generic CCS PoC (arkworks): reference oracle only, not mainline
   NIFS-circuit/             # historical constraint-count model behind old paper figures; do not reuse numbers
   configs/ docs/ results/raw/ results/summary/ plots/
@@ -488,11 +491,12 @@ Gates:
 - G3 (P7–P8): independent final verification, statement binding and fair baselines are complete. Full formal experiments may start.
 - G4 (P9–P10): raw data, statistics, reproduction and paper-scope alignment are complete. The research-artifact release bar is met.
 
-Current status (2026-10-05):
+Current status (2026-10-07):
 
 | Period | Status | Evidence |
 |---|---|---|
 | P0 | **Done**, with open blocker B15 | `docs/baseline-status.md`; `cargo test -p nova-snark --release --lib kilonova -- --test-threads=1` → 25 passed, 5 ignored (B15 and the perf harness) |
-| P1–P10 | Not started | — |
+| P1 | **Done** (OOM check pending a Linux run) | `docs/P1-report.md`; `target/release/kn-run selfcheck` → 16 checks, 0 failed; kilonova suite → 28 passed, 5 ignored |
+| P2–P10 | Not started | — |
 
 A status changes only on the commands, results and versions in an acceptance report. Creating or revising this plan does not mean prototype code, tests or experiments have been executed beyond what the P0 reports show.

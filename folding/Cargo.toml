@@ -18,11 +18,11 @@ thiserror = "1.0.40"
 serde = { version = "1.0", features = ["derive"] }
 
 # import for poly_iop & transcript
-subroutines = {git="https://github.com/EspressoSystems/hyperplonk"}
-transcript = {git="https://github.com/EspressoSystems/hyperplonk"}
+subroutines = {git="https://github.com/EspressoSystems/hyperplonk", rev="8698369edfe82bd6617a9609602380f21cabd1da"}
+transcript = {git="https://github.com/EspressoSystems/hyperplonk", rev="8698369edfe82bd6617a9609602380f21cabd1da"}
 ff = "0.13.0"
 pasta_curves = "0.5.1"
-spartan2 = { git = "https://github.com/Microsoft/Spartan2" }
+spartan2 = { git = "https://github.com/Microsoft/Spartan2", rev = "d78a5044b16ff6b60341785829539f5d0ba2961b" }
 bellpepper = "0.2.0"
 bellpepper-core = "0.2.1"
 ark-pallas = "0.4.0"

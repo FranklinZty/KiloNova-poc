@@ -259,6 +259,122 @@ pub(crate) fn check_setup_budget(history: &[SetupIterationSizes]) -> Result<(), 
   Ok(())
 }
 
+/// Constraint, variable and non-zero counts of a circuit, as measured by `CountingCS`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CountingSummary {
+  pub num_constraints: usize,
+  pub num_aux: usize,
+  pub num_inputs: usize,
+  pub nnz: usize,
+}
+
+/// Synthesizes `f` into a `CountingCS` and returns the counts. No witness values are needed.
+pub(crate) fn count_constraints<F, R>(
+  f: impl FnOnce(&mut CountingCS<F>) -> Result<R, SynthesisError>,
+) -> Result<CountingSummary, SynthesisError>
+where
+  F: PrimeField,
+{
+  let mut cs = CountingCS::<F>::default();
+  f(&mut cs)?;
+  Ok(CountingSummary {
+    num_constraints: cs.num_constraints,
+    num_aux: cs.num_aux,
+    num_inputs: cs.num_inputs,
+    nnz: cs.nnz,
+  })
+}
+
+/// Counts the application predicate `predicate_id` on its own, without the recursive verifier
+/// (m_app / w_app in PLAN.md §5.1). The `arity` state inputs are allocated as auxiliary
+/// variables, exactly as the augmented circuit does, and are excluded from `num_aux`.
+pub fn predicate_constraint_counts<F: PrimeField, PS: PredicateSet<F>>(
+  predicates: &PS,
+  predicate_id: usize,
+) -> Result<CountingSummary, SynthesisError> {
+  let arity = predicates.arity();
+  let mut counts = count_constraints::<F, _>(|cs| {
+    let z = (0..arity)
+      .map(|i| AllocatedNum::alloc(cs.namespace(|| format!("z{i}")), || Ok(F::ZERO)))
+      .collect::<Result<Vec<_>, _>>()?;
+    predicates.synthesize(predicate_id, cs, &z)
+  })?;
+  counts.num_aux -= arity;
+  Ok(counts)
+}
+
+/// Dimensions of one R1CS shape.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShapeSummary {
+  pub num_cons: usize,
+  pub num_vars: usize,
+  pub num_io: usize,
+  pub nnz: usize,
+}
+
+impl ShapeSummary {
+  pub(crate) fn of<E: Engine>(shape: &R1CSShape<E>) -> Self {
+    Self {
+      num_cons: shape.num_cons,
+      num_vars: shape.num_vars,
+      num_io: shape.num_io,
+      nnz: shape.A.data.len() + shape.B.data.len() + shape.C.data.len(),
+    }
+  }
+}
+
+/// One iteration of the `setup` fixed point (largest primary shape, secondary shape).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetupIteration {
+  pub primary_cons: usize,
+  pub primary_vars: usize,
+  pub secondary_cons: usize,
+  pub secondary_vars: usize,
+}
+
+/// Sizes recorded by `setup_with_report`: the fixed-point history, and raw (as synthesized)
+/// and padded (as stored in the global structures) augmented shapes on both curves.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetupReport {
+  pub iterations: Vec<SetupIteration>,
+  pub primary_raw: Vec<ShapeSummary>,
+  pub primary_padded: Vec<ShapeSummary>,
+  pub secondary_raw: ShapeSummary,
+  pub secondary_padded: ShapeSummary,
+  pub primary_num_vars_max: usize,
+  pub secondary_num_vars_max: usize,
+}
+
+impl SetupReport {
+  pub(crate) fn new<E1: Engine, E2: Engine>(
+    history: &[SetupIterationSizes],
+    primary_raw: &[R1CSShape<E1>],
+    primary_padded: &[&R1CSShape<E1>],
+    secondary_raw: &R1CSShape<E2>,
+    secondary_padded: &R1CSShape<E2>,
+    primary_num_vars_max: usize,
+    secondary_num_vars_max: usize,
+  ) -> Self {
+    Self {
+      iterations: history
+        .iter()
+        .map(|h| SetupIteration {
+          primary_cons: h.0,
+          primary_vars: h.1,
+          secondary_cons: h.2,
+          secondary_vars: h.3,
+        })
+        .collect(),
+      primary_raw: primary_raw.iter().map(ShapeSummary::of).collect(),
+      primary_padded: primary_padded.iter().map(|s| ShapeSummary::of(s)).collect(),
+      secondary_raw: ShapeSummary::of(secondary_raw),
+      secondary_padded: ShapeSummary::of(secondary_padded),
+      primary_num_vars_max,
+      secondary_num_vars_max,
+    }
+  }
+}
+
 fn max_commitment_key_size<E: Engine>(
   shapes: &[R1CSShape<E>],
   ck_hint: &CommitmentKeyHint<E>,
@@ -370,6 +486,16 @@ where
     ck_hint1: &CommitmentKeyHint<E1>,
     ck_hint2: &CommitmentKeyHint<E2>,
   ) -> Result<Self, NovaError> {
+    Self::setup_with_report(predicates, ck_hint1, ck_hint2).map(|(pp, _)| pp)
+  }
+
+  /// Same as `setup`, and also returns the fixed-point history and the raw and padded shape
+  /// sizes. The report is not part of the public parameters or their digest.
+  pub fn setup_with_report(
+    predicates: &PS,
+    ck_hint1: &CommitmentKeyHint<E1>,
+    ck_hint2: &CommitmentKeyHint<E2>,
+  ) -> Result<(Self, SetupReport), NovaError> {
     let ro_consts_primary = ROConstants::<E1>::default();
     let ro_consts_secondary = ROConstants::<E2>::default();
     let ro_consts_circuit_primary = ROConstantsCircuit::<E2>::default();
@@ -492,7 +618,7 @@ where
     }
 
     let structure_primary = GlobalStructure::new(&primary_shapes_final);
-    let structure_secondary = GlobalStructure::new(&[secondary_shape_final]);
+    let structure_secondary = GlobalStructure::new(std::slice::from_ref(&secondary_shape_final));
 
     // The commitment keys must cover the *padded* shapes stored in the structures: witnesses
     // are generated against `structure.predicates[id].shape` and folded witnesses have
@@ -516,6 +642,16 @@ where
       return Err(NovaError::InvalidStepCircuitIO);
     }
 
+    let report = SetupReport::new(
+      &history,
+      &primary_shapes_final,
+      &padded_primary.iter().collect::<Vec<_>>(),
+      &secondary_shape_final,
+      &structure_secondary.predicates[0].shape,
+      structure_primary.num_vars_max,
+      structure_secondary.num_vars_max,
+    );
+
     let pp = Self {
       F_arity,
       ro_consts_primary,
@@ -530,7 +666,7 @@ where
       _p: Default::default(),
     };
     let _ = pp.digest();
-    Ok(pp)
+    Ok((pp, report))
   }
 
   pub fn digest(&self) -> E1::Scalar {
@@ -941,95 +1077,10 @@ where
 mod tests {
   use super::*;
   use crate::{
-    frontend::{num::AllocatedNum, ConstraintSystem},
+    kilonova::test_utils::ExamplePredicates,
     provider::{PallasEngine, VestaEngine},
     traits::snark::default_ck_hint,
   };
-
-  #[derive(Clone, Debug, Default)]
-  struct ExamplePredicates<F: PrimeField> {
-    _p: PhantomData<F>,
-  }
-
-  impl<F: PrimeField> ExamplePredicates<F> {
-    fn output(&self, predicate_id: usize, z: &[F]) -> Vec<F> {
-      match predicate_id {
-        0 => vec![z[0] * z[0] * z[0] + z[0] + F::from(5u64)],
-        1 => vec![z[0] * z[0] + z[0] + F::from(7u64)],
-        _ => vec![z[0] * z[0] * z[0] * z[0] + F::from(9u64)],
-      }
-    }
-  }
-
-  impl<F: PrimeField> PredicateSet<F> for ExamplePredicates<F> {
-    fn arity(&self) -> usize {
-      1
-    }
-
-    fn num_predicates(&self) -> usize {
-      3
-    }
-
-    fn synthesize<CS: ConstraintSystem<F>>(
-      &self,
-      predicate_id: usize,
-      cs: &mut CS,
-      z: &[AllocatedNum<F>],
-    ) -> Result<Vec<AllocatedNum<F>>, SynthesisError> {
-      let x = &z[0];
-      match predicate_id {
-        0 => {
-          let x_sq = x.square(cs.namespace(|| "x_sq"))?;
-          let x_cu = x_sq.mul(cs.namespace(|| "x_cu"), x)?;
-          let y = AllocatedNum::alloc(cs.namespace(|| "y"), || {
-            Ok(x_cu.get_value().unwrap() + x.get_value().unwrap() + F::from(5u64))
-          })?;
-          cs.enforce(
-            || "y = x^3 + x + 5",
-            |lc| {
-              lc + x_cu.get_variable()
-                + x.get_variable()
-                + CS::one()
-                + CS::one()
-                + CS::one()
-                + CS::one()
-                + CS::one()
-            },
-            |lc| lc + CS::one(),
-            |lc| lc + y.get_variable(),
-          );
-          Ok(vec![y])
-        }
-        1 => {
-          let x_sq = x.square(cs.namespace(|| "x_sq"))?;
-          let y = AllocatedNum::alloc(cs.namespace(|| "y"), || {
-            Ok(x_sq.get_value().unwrap() + x.get_value().unwrap() + F::from(7u64))
-          })?;
-          cs.enforce(
-            || "y = x^2 + x + 7",
-            |lc| lc + x_sq.get_variable() + x.get_variable() + (F::from(7u64), CS::one()),
-            |lc| lc + CS::one(),
-            |lc| lc + y.get_variable(),
-          );
-          Ok(vec![y])
-        }
-        _ => {
-          let x_sq = x.square(cs.namespace(|| "x_sq"))?;
-          let x_4 = x_sq.square(cs.namespace(|| "x_4"))?;
-          let y = AllocatedNum::alloc(cs.namespace(|| "y"), || {
-            Ok(x_4.get_value().unwrap() + F::from(9u64))
-          })?;
-          cs.enforce(
-            || "y = x^4 + 9",
-            |lc| lc + x_4.get_variable() + (F::from(9u64), CS::one()),
-            |lc| lc + CS::one(),
-            |lc| lc + y.get_variable(),
-          );
-          Ok(vec![y])
-        }
-      }
-    }
-  }
 
   fn run_nonuniform_trace_test(predicate_trace: &[usize]) {
     let predicates = ExamplePredicates::default();
@@ -1105,6 +1156,59 @@ mod tests {
       Err(e) => println!("setup failed: {e}"),
     }
     assert!(res.is_ok());
+  }
+
+  /// P1: `setup_with_report` agrees with the stored structures and with the fixed point.
+  #[test]
+  fn test_setup_report_consistent() {
+    type F1 = <PallasEngine as Engine>::Scalar;
+    let predicates = ExamplePredicates::<F1>::default();
+    let (pp, report) =
+      PublicParams::<PallasEngine, VestaEngine, ExamplePredicates<F1>>::setup_with_report(
+        &predicates,
+        &*default_ck_hint(),
+        &*default_ck_hint(),
+      )
+      .unwrap();
+
+    assert_eq!(report.iterations.len(), 2);
+    assert_eq!(report.primary_raw.len(), 3);
+    let last = report.iterations.last().unwrap();
+    assert_eq!(
+      last.primary_cons,
+      report.primary_raw.iter().map(|s| s.num_cons).max().unwrap()
+    );
+    assert_eq!(last.secondary_cons, report.secondary_raw.num_cons);
+    for (id, (raw, padded)) in report
+      .primary_raw
+      .iter()
+      .zip(report.primary_padded.iter())
+      .enumerate()
+    {
+      let stored = &pp.structure_primary.predicates[id].shape;
+      assert_eq!(*padded, ShapeSummary::of(stored));
+      assert!(raw.num_cons <= padded.num_cons && raw.num_vars <= padded.num_vars);
+      assert!(padded.num_cons.is_power_of_two() && padded.num_vars.is_power_of_two());
+      assert_eq!(raw.num_io, 2);
+
+      let app = predicate_constraint_counts(&predicates, id).unwrap();
+      assert!(app.num_constraints > 0 && app.num_constraints < raw.num_cons);
+    }
+    assert_eq!(
+      report.secondary_padded,
+      ShapeSummary::of(&pp.structure_secondary.predicates[0].shape)
+    );
+    assert_eq!(
+      report.primary_num_vars_max,
+      pp.structure_primary.num_vars_max
+    );
+
+    // Predicate-only counts of the fixture (x^3+x+5, x^2+x+7, x^4+9).
+    let counts = (0..3)
+      .map(|id| predicate_constraint_counts(&predicates, id).unwrap())
+      .map(|c| (c.num_constraints, c.num_aux))
+      .collect::<Vec<_>>();
+    assert_eq!(counts, vec![(3, 3), (2, 2), (3, 3)]);
   }
 
   #[test]

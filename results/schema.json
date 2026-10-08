@@ -1,0 +1,548 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kilonova-poc.local/results/schema.json",
+  "title": "KiloNova run record",
+  "description": "One line of results/raw/*.jsonl, written by tools/kn-run (PLAN.md \u00a78). Every property is always present. A field that does not apply is null and has an entry in null_reasons; it is never 0. Records are append-only; a re-run gets a new run_id.",
+  "type": "object",
+  "x-record-version": 1,
+  "required": [
+    "record_version",
+    "run_id",
+    "timestamp",
+    "experiment_id",
+    "config_hash",
+    "mode",
+    "command",
+    "scheme",
+    "implementation_commit",
+    "implementation_dirty",
+    "dependency_lock_hash",
+    "cargo_lock_hash",
+    "protocol_version",
+    "transcript_version",
+    "machine_id",
+    "machine",
+    "rust_version",
+    "build_flags",
+    "threads",
+    "threads_requested",
+    "security_profile",
+    "workload",
+    "input_digest",
+    "result_digest",
+    "seed",
+    "repetition",
+    "warmup",
+    "K",
+    "T",
+    "L",
+    "a",
+    "mu",
+    "nu",
+    "d",
+    "t",
+    "q",
+    "m_app",
+    "n_app",
+    "w_app",
+    "m_aug",
+    "n_aug",
+    "padding",
+    "N_total",
+    "setup_iterations",
+    "setup_ms",
+    "witness_ms",
+    "recursive_ms",
+    "compression_ms",
+    "verify_warm_ms",
+    "verify_cold_ms",
+    "wall_ms",
+    "cpu_user_ms",
+    "cpu_sys_ms",
+    "peak_rss_bytes",
+    "checkpoint_bytes",
+    "public_state_bytes",
+    "proof_bytes",
+    "statement_bytes",
+    "vk_bytes",
+    "verification_ok",
+    "status",
+    "error_message",
+    "exit_code",
+    "signal",
+    "timeout_s",
+    "mem_cap_bytes",
+    "mem_cap_enforced",
+    "log_stdout",
+    "log_stderr",
+    "null_reasons",
+    "details"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "record_version": {
+      "type": "integer",
+      "description": "Version of this record layout (kn_run::record::RECORD_VERSION)."
+    },
+    "run_id": {
+      "type": "string",
+      "description": "YYYYMMDDTHHMMSSZ-<8 hex>; unique, sortable by start time."
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "Run start, UTC, RFC 3339."
+    },
+    "experiment_id": {
+      "type": "string",
+      "description": "Experiment group (e.g. p1-selfcheck, E2); also the default JSONL file name."
+    },
+    "config_hash": {
+      "type": "string",
+      "description": "SHA-256 of the canonical run configuration (mode, name, sorted args incl. seed, threads, timeout, mem cap). Excludes repetition/warmup/experiment."
+    },
+    "mode": {
+      "type": "string",
+      "description": "scenario | test."
+    },
+    "command": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Child command line, paths relative to the repo root."
+    },
+    "scheme": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "kilonova-direct | kilonova-span | ... ; null for harness calibration scenarios."
+    },
+    "implementation_commit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "git rev-parse HEAD."
+    },
+    "implementation_dirty": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Tracked files differed from HEAD at run time."
+    },
+    "dependency_lock_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "SHA-256 of versions.lock."
+    },
+    "cargo_lock_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "SHA-256 of the root Cargo.lock."
+    },
+    "protocol_version": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "HFS protocol version reported by the child."
+    },
+    "transcript_version": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "HFS transcript version (transcript.rs HFS_TRANSCRIPT_VERSION)."
+    },
+    "machine_id": {
+      "type": "string",
+      "description": "First 16 hex of SHA-256 over the machine object."
+    },
+    "machine": {
+      "type": "object",
+      "description": "hostname, os, arch, cpu_model, logical_cpus, mem_total_bytes."
+    },
+    "rust_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "rustc -V in the repo root (respects rust-toolchain.toml)."
+    },
+    "build_flags": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Build profile of the child and RUSTFLAGS at build time."
+    },
+    "threads": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Actual compute threads in the child (rayon::current_num_threads)."
+    },
+    "threads_requested": {
+      "type": "integer",
+      "description": "RAYON_NUM_THREADS given to the child."
+    },
+    "security_profile": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Curves, commitment, RO, challenge and hash bit lengths, ZK flag."
+    },
+    "workload": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Predicate family or calibration workload, or test:<path>."
+    },
+    "input_digest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "SHA-256 of the canonical semantic inputs (scenario, variant, family, seed, z0, trace)."
+    },
+    "result_digest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "SHA-256 of the semantic results (pp digest, shape sizes, outputs); excludes proof randomness."
+    },
+    "seed": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Semantic input seed."
+    },
+    "repetition": {
+      "type": "integer",
+      "description": "Repetition index within a configuration."
+    },
+    "warmup": {
+      "type": "boolean",
+      "description": "Untimed warm-up run (excluded from statistics)."
+    },
+    "K": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Size of the predicate family."
+    },
+    "T": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Real application steps in the chain."
+    },
+    "L": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Real leaf tasks (PCD)."
+    },
+    "a": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Predecessors per PCD node."
+    },
+    "mu": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Running ACCS inputs per fold."
+    },
+    "nu": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Incoming CCS inputs per fold."
+    },
+    "d": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Maximum CCS product degree."
+    },
+    "t": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Matrices per CCS."
+    },
+    "q": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "CCS product terms."
+    },
+    "m_app": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Max constraints of an application predicate alone (no recursive verifier)."
+    },
+    "n_app": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Max full assignment columns of a predicate alone: state inputs + internal witness + constant."
+    },
+    "w_app": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Max private witness elements of a predicate alone (excluding state inputs)."
+    },
+    "m_aug": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Max raw constraints of the primary augmented circuits."
+    },
+    "n_aug": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Max raw full assignment columns of the primary augmented circuits (num_vars + 1 + num_io)."
+    },
+    "padding": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Padded dimensions on both curves; per-predicate raw/padded in details."
+    },
+    "N_total": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Sum of raw non-zeros over the K primary augmented shapes; secondary in details."
+    },
+    "setup_iterations": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Iterations of the setup fixed point."
+    },
+    "setup_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "PublicParams::setup only (in-process timer)."
+    },
+    "witness_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Witness generation, when separable."
+    },
+    "recursive_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "RecursiveSNARK::new plus all prove_step calls (in-process timer)."
+    },
+    "compression_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Compression (P7)."
+    },
+    "verify_warm_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "RecursiveSNARK::verify with public parameters in memory."
+    },
+    "verify_cold_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Verifier loading from files (P7)."
+    },
+    "wall_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Spawn to reap, measured by the runner; includes process start-up (poll granularity 1 ms first 100 ms, then 10 ms)."
+    },
+    "cpu_user_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Child user CPU time (rusage)."
+    },
+    "cpu_sys_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Child system CPU time (rusage)."
+    },
+    "peak_rss_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Child whole-run peak RSS from wait4 (ru_maxrss normalised to bytes)."
+    },
+    "checkpoint_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Serialized private prover checkpoint (bincode legacy of RecursiveSNARK; includes witnesses)."
+    },
+    "public_state_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Public uncompressed recursive state."
+    },
+    "proof_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Final compressed proof."
+    },
+    "statement_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Public statement."
+    },
+    "vk_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Verifier material."
+    },
+    "verification_ok": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "The run executed verification and it accepted."
+    },
+    "status": {
+      "type": "string",
+      "description": "success | failure | timeout | oom.",
+      "enum": [
+        "success",
+        "failure",
+        "timeout",
+        "oom"
+      ]
+    },
+    "error_message": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Why the run did not succeed."
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Child exit code."
+    },
+    "signal": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Signal that terminated the child."
+    },
+    "timeout_s": {
+      "type": "integer",
+      "description": "Timeout applied by the runner."
+    },
+    "mem_cap_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Requested memory cap."
+    },
+    "mem_cap_enforced": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Cap applied with RLIMIT_AS (Linux only)."
+    },
+    "log_stdout": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Raw child stdout log."
+    },
+    "log_stderr": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Raw child stderr log."
+    },
+    "null_reasons": {
+      "type": "object",
+      "description": "field -> reason, for every field whose value is null.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "details": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Nested breakdowns: per-predicate and per-curve sizes, setup report, args, scenario extras."
+    }
+  }
+}

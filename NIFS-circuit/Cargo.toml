@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 nova-snark = {path = "../Nova"}
-subroutines = {git="https://github.com/EspressoSystems/hyperplonk"}
-transcript = {git="https://github.com/EspressoSystems/hyperplonk"}
+subroutines = {git="https://github.com/EspressoSystems/hyperplonk", rev="2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"}
+transcript = {git="https://github.com/EspressoSystems/hyperplonk", rev="2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"}
 
 ff = { version = "0.13.0", features = ["derive"] }
 digest = "0.10"

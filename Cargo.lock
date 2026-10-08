@@ -109,7 +109,7 @@ checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
 [[package]]
 name = "arithmetic"
 version = "0.1.0"
-source = "git+https://github.com/EspressoSystems/hyperplonk#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
+source = "git+https://github.com/EspressoSystems/hyperplonk?rev=2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
 dependencies = [
  "ark-bls12-381 0.4.0",
  "ark-ff 0.4.2",
@@ -1606,6 +1606,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kn-run"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "ff",
+ "libc",
+ "nova-snark",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2697,7 +2713,7 @@ checksum = "9091b6114800a5f2141aee1d1b9d6ca3592ac062dc5decb3764ec5895a47b4eb"
 [[package]]
 name = "subroutines"
 version = "0.1.0"
-source = "git+https://github.com/EspressoSystems/hyperplonk#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
+source = "git+https://github.com/EspressoSystems/hyperplonk?rev=2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
 dependencies = [
  "arithmetic",
  "ark-bls12-381 0.4.0",
@@ -3039,7 +3055,7 @@ dependencies = [
 [[package]]
 name = "transcript"
 version = "0.1.0"
-source = "git+https://github.com/EspressoSystems/hyperplonk#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
+source = "git+https://github.com/EspressoSystems/hyperplonk?rev=2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
 dependencies = [
  "ark-ff 0.4.2",
  "ark-serialize 0.4.2",
@@ -3121,7 +3137,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/EspressoSystems/hyperplonk#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
+source = "git+https://github.com/EspressoSystems/hyperplonk?rev=2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
 dependencies = [
  "rayon",
 ]

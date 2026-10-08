@@ -1,0 +1,4 @@
+
+thread 'main' (30420506) panicked at tools/kn-run/src/bin/kn-scenario.rs:392:15:
+kn-scenario: deliberate failure (scenario 'fail')
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

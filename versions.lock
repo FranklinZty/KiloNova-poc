@@ -5,8 +5,9 @@
 [repository]
 normative_impl      = "Nova/src/kilonova"           # docs/protocol-spec.md §0
 hfs_transcript      = 1                             # Nova/src/kilonova/transcript.rs
-workspace_members   = ["NIFS-circuit", "Nova"]      # folding/ is NOT a member (own Cargo.lock)
-p0_commit           = "TO FILL: git rev-parse HEAD after committing the P0 changes"
+workspace_members   = ["NIFS-circuit", "Nova", "tools/kn-run"]  # folding/ is excluded (own Cargo.lock); kn-run added in P1
+p0_commit           = "72f9596336a15aad7d54c8f5a3dc4e2fe59d74fe"
+p1_commit           = "TO FILL: git rev-parse HEAD after committing the P1 changes"
 
 [toolchain]
 pinned              = "1.92.0"                      # rust-toolchain.toml; measured in docs/P0-plan.md
@@ -14,10 +15,14 @@ msrv_declared       = "1.79.0"                      # Nova/Cargo.toml rust-versi
 also_verified_on    = "1.97.0"                      # P0 cloud run, docs/baseline-status.md §1
 
 [cargo_lock]
-root_sha256         = "10e288e5f9a15f2953a97ab5c50b55bc7aeb86b84459ccea6892f2f8094108cb"
+root_sha256         = "da9a843f4e5ef7cf403e37101f75bb7f183260fd92c80d3b48ac30b5d18bc987"   # P1: + kn-run, git sources now carry ?rev=
+folding_sha256      = "c738cddc958a464138fd173089ace8ddb48d4a1f90b486ce3330ed559715f154"   # P1: lockfile v4, git sources carry ?rev=
 
 [crates]                                            # from root Cargo.lock
 nova-snark          = "0.42.0 (path = Nova)"
+kn-run              = "0.1.0 (path = tools/kn-run)"   # P1 harness; adds no new third-party crates
+serde_json          = "1 (already in the lock; used by kn-run)"
+libc                = "0.2 (already in the lock; used by kn-run)"
 ff                  = "0.13.1"
 halo2curves         = "0.9.0"                       # 0.8.0 also present transitively
 rayon               = "1.11.0"
@@ -26,12 +31,11 @@ serde               = "1.0.228"
 sha3                = "0.10.8"
 
 [git_dependencies]
-# NIFS-circuit/Cargo.toml declares these WITHOUT `rev =`; the root Cargo.lock resolves them to:
+# P1: NIFS-circuit/Cargo.toml and folding/Cargo.toml now pin these with `rev =` (same commits as before):
 hyperplonk_root     = "https://github.com/EspressoSystems/hyperplonk#2a3b55c97ad8a5d6627108a2e7def2aeccb7f3b9"
-# folding/Cargo.toml (separate lock, not offline-buildable per docs/P0-plan.md §P0.6):
+# folding/Cargo.toml (separate lock; resolves from folding/ now that the root workspace excludes it (build not re-checked in P1)):
 hyperplonk_folding  = "https://github.com/EspressoSystems/hyperplonk#8698369edfe82bd6617a9609602380f21cabd1da"
 spartan2_folding    = "https://github.com/Microsoft/Spartan2#d78a5044b16ff6b60341785829539f5d0ba2961b"
-# TODO(P1): add `rev = "..."` to both Cargo.toml files so the manifests match the locks.
 
 [crypto]
 see                 = "configs/common.toml [crypto]"

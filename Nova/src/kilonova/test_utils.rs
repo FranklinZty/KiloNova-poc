@@ -31,13 +31,130 @@ use crate::{
   },
   CE,
 };
-use ff::Field;
+use core::marker::PhantomData;
+use ff::{Field, PrimeField};
 
 pub type CommitmentOf<E> = <<E as Engine>::CE as CommitmentEngineTrait<E>>::Commitment;
 pub type CommitmentKeyOf<E> = <<E as Engine>::CE as CommitmentEngineTrait<E>>::CommitmentKey;
 
 pub(crate) type PrimaryEngine = PallasEngine;
 pub(crate) type SecondaryEngine = VestaEngine;
+
+/// The K=3 toy predicate family used by the direct-variant IVC tests and by `kn-run`.
+/// The predicates have different wiring: 0: y = x^3 + x + 5, 1: y = x^2 + x + 7, 2: y = x^4 + 9.
+#[derive(Clone, Debug, Default)]
+pub struct ExamplePredicates<F: PrimeField> {
+  _p: PhantomData<F>,
+}
+
+impl<F: PrimeField> ExamplePredicates<F> {
+  /// Native evaluation of predicate `predicate_id` on state `z`.
+  pub fn output(&self, predicate_id: usize, z: &[F]) -> Vec<F> {
+    match predicate_id {
+      0 => vec![z[0] * z[0] * z[0] + z[0] + F::from(5u64)],
+      1 => vec![z[0] * z[0] + z[0] + F::from(7u64)],
+      _ => vec![z[0] * z[0] * z[0] * z[0] + F::from(9u64)],
+    }
+  }
+
+  fn synthesize_impl<CS: ConstraintSystem<F>>(
+    &self,
+    predicate_id: usize,
+    cs: &mut CS,
+    z: &[AllocatedNum<F>],
+  ) -> Result<Vec<AllocatedNum<F>>, SynthesisError> {
+    let x = &z[0];
+    match predicate_id {
+      0 => {
+        let x_sq = x.square(cs.namespace(|| "x_sq"))?;
+        let x_cu = x_sq.mul(cs.namespace(|| "x_cu"), x)?;
+        let y = AllocatedNum::alloc(cs.namespace(|| "y"), || {
+          Ok(x_cu.get_value().unwrap() + x.get_value().unwrap() + F::from(5u64))
+        })?;
+        cs.enforce(
+          || "y = x^3 + x + 5",
+          |lc| {
+            lc + x_cu.get_variable()
+              + x.get_variable()
+              + CS::one()
+              + CS::one()
+              + CS::one()
+              + CS::one()
+              + CS::one()
+          },
+          |lc| lc + CS::one(),
+          |lc| lc + y.get_variable(),
+        );
+        Ok(vec![y])
+      }
+      1 => {
+        let x_sq = x.square(cs.namespace(|| "x_sq"))?;
+        let y = AllocatedNum::alloc(cs.namespace(|| "y"), || {
+          Ok(x_sq.get_value().unwrap() + x.get_value().unwrap() + F::from(7u64))
+        })?;
+        cs.enforce(
+          || "y = x^2 + x + 7",
+          |lc| lc + x_sq.get_variable() + x.get_variable() + (F::from(7u64), CS::one()),
+          |lc| lc + CS::one(),
+          |lc| lc + y.get_variable(),
+        );
+        Ok(vec![y])
+      }
+      _ => {
+        let x_sq = x.square(cs.namespace(|| "x_sq"))?;
+        let x_4 = x_sq.square(cs.namespace(|| "x_4"))?;
+        let y = AllocatedNum::alloc(cs.namespace(|| "y"), || {
+          Ok(x_4.get_value().unwrap() + F::from(9u64))
+        })?;
+        cs.enforce(
+          || "y = x^4 + 9",
+          |lc| lc + x_4.get_variable() + (F::from(9u64), CS::one()),
+          |lc| lc + CS::one(),
+          |lc| lc + y.get_variable(),
+        );
+        Ok(vec![y])
+      }
+    }
+  }
+}
+
+impl<F: PrimeField> crate::kilonova::PredicateSet<F> for ExamplePredicates<F> {
+  fn arity(&self) -> usize {
+    1
+  }
+
+  fn num_predicates(&self) -> usize {
+    3
+  }
+
+  fn synthesize<CS: ConstraintSystem<F>>(
+    &self,
+    predicate_id: usize,
+    cs: &mut CS,
+    z: &[AllocatedNum<F>],
+  ) -> Result<Vec<AllocatedNum<F>>, SynthesisError> {
+    self.synthesize_impl(predicate_id, cs, z)
+  }
+}
+
+impl<F: PrimeField> crate::kilonova::span::PredicateSet<F> for ExamplePredicates<F> {
+  fn arity(&self) -> usize {
+    1
+  }
+
+  fn num_predicates(&self) -> usize {
+    3
+  }
+
+  fn synthesize<CS: ConstraintSystem<F>>(
+    &self,
+    predicate_id: usize,
+    cs: &mut CS,
+    z: &[AllocatedNum<F>],
+  ) -> Result<Vec<AllocatedNum<F>>, SynthesisError> {
+    self.synthesize_impl(predicate_id, cs, z)
+  }
+}
 pub(crate) type PrimaryBase = <PrimaryEngine as Engine>::Base;
 pub(crate) type PrimaryScalar = <PrimaryEngine as Engine>::Scalar;
 type BenchSnark =

@@ -66,6 +66,22 @@ impl<F: PrimeField> PredicateSet<F> for TrivialPredicateSet<F> {
   }
 }
 
+/// Span-variant counterpart of `kilonova::predicate_constraint_counts`.
+pub fn predicate_constraint_counts<F: PrimeField, PS: PredicateSet<F>>(
+  predicates: &PS,
+  predicate_id: usize,
+) -> Result<super::CountingSummary, SynthesisError> {
+  let arity = predicates.arity();
+  let mut counts = super::count_constraints::<F, _>(|cs| {
+    let z = (0..arity)
+      .map(|i| AllocatedNum::alloc(cs.namespace(|| format!("z{i}")), || Ok(F::ZERO)))
+      .collect::<Result<Vec<_>, _>>()?;
+    predicates.synthesize(predicate_id, cs, &z)
+  })?;
+  counts.num_aux -= arity;
+  Ok(counts)
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct PublicParams<E1, E2, PS>
@@ -251,6 +267,16 @@ where
     ck_hint1: &CommitmentKeyHint<E1>,
     ck_hint2: &CommitmentKeyHint<E2>,
   ) -> Result<Self, NovaError> {
+    Self::setup_with_report(predicates, ck_hint1, ck_hint2).map(|(pp, _)| pp)
+  }
+
+  /// Same as `setup`, and also returns the fixed-point history and the raw and padded shape
+  /// sizes. The report is not part of the public parameters or their digest.
+  pub fn setup_with_report(
+    predicates: &PS,
+    ck_hint1: &CommitmentKeyHint<E1>,
+    ck_hint2: &CommitmentKeyHint<E2>,
+  ) -> Result<(Self, super::SetupReport), NovaError> {
     let ro_consts_primary = ROConstants::<E1>::default();
     let ro_consts_secondary = ROConstants::<E2>::default();
     let ro_consts_circuit_primary = ROConstantsCircuit::<E2>::default();
@@ -340,7 +366,7 @@ where
     }
 
     let structure_primary = GlobalStructure::new(&primary_shapes_final);
-    let structure_secondary = GlobalStructure::new(&[secondary_shape_final]);
+    let structure_secondary = GlobalStructure::new(std::slice::from_ref(&secondary_shape_final));
 
     // The commitment keys must cover the *padded* shapes stored in the structures: witnesses
     // are generated against `structure.predicates[id].shape` and folded witnesses have
@@ -364,6 +390,16 @@ where
       return Err(NovaError::InvalidStepCircuitIO);
     }
 
+    let report = super::SetupReport::new(
+      &history,
+      &primary_shapes_final,
+      &padded_primary.iter().collect::<Vec<_>>(),
+      &secondary_shape_final,
+      &structure_secondary.predicates[0].shape,
+      structure_primary.num_vars_max,
+      structure_secondary.num_vars_max,
+    );
+
     let pp = Self {
       F_arity,
       ro_consts_primary,
@@ -378,7 +414,7 @@ where
       _p: Default::default(),
     };
     let _ = pp.digest();
-    Ok(pp)
+    Ok((pp, report))
   }
 
   pub fn digest(&self) -> E1::Scalar {

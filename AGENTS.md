@@ -3,6 +3,7 @@
 ## Current status (read first)
 
 - **P0 is done** (2026-10-05). See `docs/baseline-status.md`.
+- **P1 harness** (`tools/kn-run`, `results/schema.json`): every measurement goes through `kn-run` so records share one format. See `docs/P1-report.md`.
 - `Nova/src/kilonova/` is the **normative** implementation (`docs/protocol-spec.md`). `folding/` is a reference oracle only. `NIFS-circuit/` holds the historical cost model behind the old paper figures; never reuse its numbers.
 - **Open critical blocker B15:** the HFS folds over `E::Base` while the R1CS lives over `E::Scalar`. Multi-step IVC tests are `#[ignore = "known issue B15 …"]`; the 1-step bootstrap passes. The fix is P3/P5 (see PLAN.md §0 and the P3.0 decision spike).
 - Invariants that must not regress:
@@ -18,18 +19,22 @@ KiloNova is a **preprocessing recursive SNARK** for fixed sets of non-uniform pr
 
 ```
 KiloNova-poc/
-├── Cargo.toml              # Workspace root (members: NIFS-circuit, Nova)
+├── Cargo.toml              # Workspace root (members: NIFS-circuit, Nova, tools/kn-run; folding excluded)
 ├── README.md               # Project overview and development progress
 ├── kilonova.png            # Architecture diagram
 ├── PLAN.md                 # Development & experiment plan (English, revised 2026-10-05)
 ├── versions.lock           # Toolchain / dependency freeze (P0)
 ├── rust-toolchain.toml     # Pinned toolchain (1.92.0)
 ├── configs/common.toml     # Parameter contract (P0 freeze)
-├── docs/                   # P0 specs and reports
+├── tools/kn-run/           # P1 experiment harness: kn-run (runner) + kn-scenario (child)
+├── results/                # schema.json (record layout) + raw/ append-only JSONL run records
+├── docs/                   # P0/P1 specs and reports
 │   ├── protocol-spec.md    # NORMATIVE protocol + transcript (HFS v1)
 │   ├── claim-check-map.md  # claim -> checker -> code location
 │   ├── baseline-status.md  # measurements + blocker register B1-B17
 │   ├── P0-plan.md          # P0 rebase plan (Chinese)
+│   ├── P1-plan.md          # P1 harness plan
+│   ├── P1-report.md        # P1 acceptance report
 │   └── PLAN.zh.md          # original Chinese PLAN (2026-09-21)
 │
 ├── Nova/                   # Core crate: nova-snark v0.42.0
@@ -124,7 +129,7 @@ KiloNova-poc/
 | `circuit/mod.rs` | `KiloNovaAugmentedCircuit` for recursive verification |
 | `circuit/r1cs.rs` | In-circuit holographic folding verification gadgets |
 | `span/` | Alternative "span" variant (lambda stored directly, not committed) |
-| `test_utils.rs` | Test infrastructure comparing direct vs span variants; native-vs-gadget transcript tests |
+| `test_utils.rs` | Test infrastructure comparing direct vs span variants; native-vs-gadget transcript tests; shared `ExamplePredicates` (K=3) fixture used by tests and `kn-run` |
 
 ### `Nova/src/nova/` (Inherited from Nova)
 
@@ -160,6 +165,9 @@ cargo test -p nova-snark --release --lib kilonova -- --test-threads=1
 
 # Setup fixed-point sizes per iteration
 cargo test -p nova-snark --release --lib kilonova::tests::test_setup_fixed_point_converges -- --nocapture
+
+# Experiment harness (P1): process-isolated runs, JSONL records in results/raw/
+cargo build -p kn-run --release && target/release/kn-run selfcheck --quick
 
 # Run NIFS-circuit benchmarks
 cargo run -p NIFS-circuit
