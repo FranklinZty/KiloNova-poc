@@ -749,6 +749,95 @@ mod tests {
 
   type S = RelaxedR1CSSNARK<SecondaryEngine, EvaluationEngine<SecondaryEngine>>;
 
+  /// P2: the kn-ccs reference oracle uses exactly kilonova's conventions: z layout, padding
+  /// rule, s / s' and little-endian MLE bit order. Compared on random R1CS shapes with
+  /// num_io = 2. Evaluations are compared over E::Base on the projected entries, because that
+  /// is where kilonova evaluates today (B15).
+  #[test]
+  fn test_kn_ccs_matches_kilonova_conventions() {
+    use kn_ccs::mle::{eval_matrix_mle, eval_vec_mle, num_vars};
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::{RngCore, SeedableRng};
+
+    for seed in 0..20u64 {
+      let mut rng = ChaCha20Rng::seed_from_u64(seed);
+      let m = 1 + (rng.next_u64() % 40) as usize;
+      let num_w = 1 + (rng.next_u64() % 40) as usize;
+      let (ccs, _) = kn_ccs::gen::random_satisfiable(
+        &kn_ccs::Template::<PrimaryScalar>::r1cs(),
+        m,
+        num_w,
+        2,
+        3,
+        &mut rng,
+      )
+      .unwrap();
+      let to_nova = |mat: &kn_ccs::SparseMatrix<PrimaryScalar>| {
+        SparseMatrix::new(mat.entries(), mat.rows(), mat.cols())
+      };
+      let shape = R1CSShape::<PrimaryEngine>::new(
+        m,
+        num_w,
+        2,
+        to_nova(&ccs.matrices[0]),
+        to_nova(&ccs.matrices[1]),
+        to_nova(&ccs.matrices[2]),
+      )
+      .unwrap();
+
+      // Same padding rule, entry for entry.
+      let padded = kn_ccs::pad::pad(&ccs).unwrap();
+      let nova_padded = shape.pad();
+      assert_eq!(
+        (padded.m, padded.num_w, padded.num_io),
+        (
+          nova_padded.num_cons,
+          nova_padded.num_vars,
+          nova_padded.num_io
+        )
+      );
+      for (j, nova_mat) in [&nova_padded.A, &nova_padded.B, &nova_padded.C]
+        .into_iter()
+        .enumerate()
+      {
+        let ours: Vec<_> = padded.matrices[j].entries().to_vec();
+        let mut theirs: Vec<_> = nova_mat
+          .iter()
+          .filter(|e| e.2 != PrimaryScalar::ZERO)
+          .collect();
+        theirs.sort_by_key(|e| (e.0, e.1));
+        assert_eq!(ours, theirs, "seed {seed}, matrix {j}");
+      }
+
+      // Same s / s' and the same MLE values at random points.
+      let structure = direct_relation::GlobalStructure::new(std::slice::from_ref(&shape));
+      assert_eq!(structure.s_max, num_vars(padded.m));
+      assert_eq!(structure.s_prime_max, num_vars(padded.n()));
+      let r_x: Vec<PrimaryBase> = (0..structure.s_max)
+        .map(|_| PrimaryBase::random(&mut rng))
+        .collect();
+      let r_y: Vec<PrimaryBase> = (0..structure.s_prime_max)
+        .map(|_| PrimaryBase::random(&mut rng))
+        .collect();
+      for j in 0..3 {
+        let projected = kn_ccs::SparseMatrix::<PrimaryBase>::from_triplets(
+          padded.m,
+          padded.n(),
+          structure.predicates[0].mats[j].iter().copied(),
+        )
+        .unwrap();
+        assert_eq!(
+          structure.eval_matrix_predicate(0, j, &r_x, &r_y),
+          eval_matrix_mle(&projected, &r_x, &r_y).unwrap()
+        );
+      }
+      let z: Vec<PrimaryBase> = (0..padded.n())
+        .map(|_| PrimaryBase::random(&mut rng))
+        .collect();
+      assert_eq!(structure.eval_z(&z, &r_y), eval_vec_mle(&z, &r_y).unwrap());
+    }
+  }
+
   /// Cross-implementation transcript test (P0.3): the in-circuit HFS verifier must derive the
   /// same challenges (gamma, alpha, delta, rho, sum-check points) as the native verifier.
   /// The sum-check point checks are constraints; rho is checked here by recomputing the

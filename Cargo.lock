@@ -1606,11 +1606,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kn-ccs"
+version = "0.1.0"
+dependencies = [
+ "ff",
+ "halo2curves 0.9.0",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "kn-run"
 version = "0.1.0"
 dependencies = [
  "bincode",
  "ff",
+ "kn-ccs",
  "libc",
  "nova-snark",
  "rand_chacha 0.3.1",
@@ -1774,6 +1785,7 @@ dependencies = [
  "halo2curves 0.9.0",
  "hex",
  "itertools 0.14.0",
+ "kn-ccs",
  "num-bigint 0.4.6",
  "num-integer",
  "num-traits",

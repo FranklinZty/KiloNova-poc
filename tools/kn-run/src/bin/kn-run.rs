@@ -265,7 +265,7 @@ fn execute(target: &Target, opts: &Opts, default_experiment: &str) -> Map<String
       let mut args = args.clone();
       args.sort();
       let seed = opts.seed.or(match name.as_str() {
-        "bootstrap" | "chain" => Some(101),
+        "bootstrap" | "chain" | "ccs" => Some(101),
         _ => None,
       });
       if let Some(s) = seed {

@@ -2,7 +2,7 @@
 
 Version: 2026-10-05 (revision 2). Supersedes the 2026-09-21 plan, whose original Chinese text is kept in `docs/PLAN.zh.md`.
 
-Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
+Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
 
 ## 0. What changed in this revision, and why
 
@@ -95,7 +95,10 @@ Acceptance:
 
 The full workload generator, adapters and config validator move to P8.
 
-### P2: Native CCS construction and ACCS reference checker (5–8 days; depends on P0)
+### P2: Native CCS construction and ACCS reference checker (done 2026-10-20; 5–8 days; depends on P0)
+
+Delivered: workspace crate `ccs/` (`kn-ccs`): builder, templates, ACCS/CCCS reference checker, canonical encoding, padding/embedding, and the `folding/` layout adapter. Plus a kilonova conventions cross-test and the `kn-scenario ccs` record. Choice recorded: the checker was written from scratch, not ported from `folding/`. Plan `docs/P2-plan.md`, report `docs/P2-report.md`.
+
 
 Goal: real support for high-degree constraints, plus a slow correctness oracle that is independent of the protocol code.
 
@@ -275,7 +278,7 @@ Acceptance:
 |---|---|---|---|
 | P0 | done | — | |
 | P1 | done | no | |
-| P2 | 5–8 | yes | |
+| P2 | done | yes | |
 | P3 (incl. P3.0) | 10–16 | yes | D1 decided here |
 | P4 | 5–8 | yes | |
 | P5 | 10–15 | yes | |
@@ -296,7 +299,7 @@ The layout follows the current repository and does not require restructuring it.
 KiloNova-poc/
   Nova/src/kilonova/        # normative HFS (Direct) + span/ (Span ablation)
     relation.rs nifs.rs transcript.rs circuit/ span/ test_utils.rs
-  <new> ccs/                # P2: NativeCcsBuilder, ACCS reference checker (same field types)
+  ccs/                      # P2: kn-ccs NativeCcsBuilder, ACCS reference checker (same field types)
   tools/kn-run              # P1: process-isolated runner, JSONL output
   folding/                  # generic CCS PoC (arkworks): reference oracle only, not mainline
   NIFS-circuit/             # historical constraint-count model behind old paper figures; do not reuse numbers
@@ -491,12 +494,13 @@ Gates:
 - G3 (P7–P8): independent final verification, statement binding and fair baselines are complete. Full formal experiments may start.
 - G4 (P9–P10): raw data, statistics, reproduction and paper-scope alignment are complete. The research-artifact release bar is met.
 
-Current status (2026-10-07):
+Current status (2026-10-20):
 
 | Period | Status | Evidence |
 |---|---|---|
 | P0 | **Done**, with open blocker B15 | `docs/baseline-status.md`; `cargo test -p nova-snark --release --lib kilonova -- --test-threads=1` → 25 passed, 5 ignored (B15 and the perf harness) |
 | P1 | **Done** (OOM check pending a Linux run) | `docs/P1-report.md`; `target/release/kn-run selfcheck` → 16 checks, 0 failed; kilonova suite → 28 passed, 5 ignored |
-| P2–P10 | Not started | — |
+| P2 | **Done** | `docs/P2-report.md`; `cargo test -p kn-ccs --release` → 20 passed; kilonova suite → 29 passed, 5 ignored; `results/raw/p2-ccs.jsonl` |
+| P3–P10 | Not started | — |
 
 A status changes only on the commands, results and versions in an acceptance report. Creating or revising this plan does not mean prototype code, tests or experiments have been executed beyond what the P0 reports show.

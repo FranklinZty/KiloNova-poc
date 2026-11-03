@@ -5,9 +5,10 @@
 [repository]
 normative_impl      = "Nova/src/kilonova"           # docs/protocol-spec.md §0
 hfs_transcript      = 1                             # Nova/src/kilonova/transcript.rs
-workspace_members   = ["NIFS-circuit", "Nova", "tools/kn-run"]  # folding/ is excluded (own Cargo.lock); kn-run added in P1
+workspace_members   = ["NIFS-circuit", "Nova", "ccs", "tools/kn-run"]  # folding/ is excluded (own Cargo.lock); kn-run added in P1, ccs (kn-ccs) in P2
 p0_commit           = "72f9596336a15aad7d54c8f5a3dc4e2fe59d74fe"
 p1_commit           = "c9674cdac4565a01883f1aa2349e801e1717ed85"
+p2_commit           = "TO FILL: git rev-parse HEAD after committing the P2 changes"
 
 [toolchain]
 pinned              = "1.92.0"                      # rust-toolchain.toml; measured in docs/P0-plan.md
@@ -15,12 +16,13 @@ msrv_declared       = "1.79.0"                      # Nova/Cargo.toml rust-versi
 also_verified_on    = "1.97.0"                      # P0 cloud run, docs/baseline-status.md §1
 
 [cargo_lock]
-root_sha256         = "da9a843f4e5ef7cf403e37101f75bb7f183260fd92c80d3b48ac30b5d18bc987"   # P1: + kn-run, git sources now carry ?rev=
+root_sha256         = "66dc1d43d1ed54a5e7d3db288b16f9f8548adbe70b95a358f816af738e802e86"   # P2: + kn-ccs (P1: + kn-run, git sources carry ?rev=)
 folding_sha256      = "c738cddc958a464138fd173089ace8ddb48d4a1f90b486ce3330ed559715f154"   # P1: lockfile v4, git sources carry ?rev=
 
 [crates]                                            # from root Cargo.lock
 nova-snark          = "0.42.0 (path = Nova)"
 kn-run              = "0.1.0 (path = tools/kn-run)"   # P1 harness; adds no new third-party crates
+kn-ccs              = "0.1.0 (path = ccs)"            # P2 oracle; deps ff, rand_core, rand_chacha (already locked)
 serde_json          = "1 (already in the lock; used by kn-run)"
 libc                = "0.2 (already in the lock; used by kn-run)"
 ff                  = "0.13.1"

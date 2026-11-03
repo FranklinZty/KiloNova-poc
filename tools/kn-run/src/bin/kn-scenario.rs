@@ -379,6 +379,104 @@ macro_rules! protocol_scenarios {
 protocol_scenarios!(direct, "direct", nova_snark::kilonova);
 protocol_scenarios!(span, "span", nova_snark::kilonova::span);
 
+/// P2: the fifth-power chain as native degree-5 CCS and as the equivalent R1CS, both checked
+/// by the kn-ccs reference oracle. The input x0 is derived from the seed.
+fn scenario_ccs(out: &mut Output, args: &Args) -> Result<(), String> {
+  use kn_ccs::{encode::encode, gen};
+  let steps: usize = arg(args, "steps", Some(64))?;
+  let seed: u64 = arg(args, "seed", None)?;
+  if steps == 0 {
+    return Err("steps must be >= 1".into());
+  }
+  let x0 = F1::random(&mut ChaCha20Rng::seed_from_u64(seed));
+
+  let t = Instant::now();
+  let (native, a) = gen::fifth_power_native(steps, Some(x0)).map_err(|e| e.to_string())?;
+  let native_build_ms = ms(t);
+  let t = Instant::now();
+  let (r1cs, b) = gen::fifth_power_r1cs(steps, Some(x0)).map_err(|e| e.to_string())?;
+  let r1cs_build_ms = ms(t);
+  let (a, b) = (a.unwrap(), b.unwrap());
+
+  let t = Instant::now();
+  let native_ok = native.is_satisfied(&a.z());
+  let native_check_ms = ms(t);
+  let t = Instant::now();
+  let r1cs_ok = r1cs.is_satisfied(&b.z());
+  let r1cs_check_ms = ms(t);
+  let ok = native_ok.is_ok() && r1cs_ok.is_ok() && a.io == b.io;
+
+  out.f("scheme", "kn-ccs-oracle");
+  out.f("workload", "fifth-power-chain");
+  out.f("T", steps);
+  out.f("d", native.degree());
+  out.f("t", native.t());
+  out.f("q", native.q());
+  out.f("m_app", native.m);
+  out.f("n_app", native.n());
+  out.f("w_app", native.num_w);
+  out.f("N_total", native.nnz());
+  out.f("verification_ok", ok);
+  let r = "P2 oracle scenario: no folding, recursion or setup";
+  for k in [
+    "K",
+    "mu",
+    "nu",
+    "m_aug",
+    "n_aug",
+    "padding",
+    "setup_iterations",
+    "setup_ms",
+    "recursive_ms",
+    "verify_warm_ms",
+    "checkpoint_bytes",
+  ] {
+    out.why(k, r);
+  }
+  out.d(
+    "native",
+    json!({"m": native.m, "n": native.n(), "w": native.num_w, "nnz": native.nnz(),
+           "t": native.t(), "q": native.q(), "d": native.degree(),
+           "multiset0": native.template.multisets[0],
+           "build_ms": native_build_ms, "check_ms": native_check_ms}),
+  );
+  out.d(
+    "r1cs",
+    json!({"m": r1cs.m, "n": r1cs.n(), "w": r1cs.num_w, "nnz": r1cs.nnz(),
+           "t": r1cs.t(), "q": r1cs.q(), "d": r1cs.degree(),
+           "build_ms": r1cs_build_ms, "check_ms": r1cs_check_ms}),
+  );
+  out.d(
+    "r1cs_over_native",
+    json!({"m": r1cs.m as f64 / native.m as f64,
+           "w": r1cs.num_w as f64 / native.num_w.max(1) as f64,
+           "nnz": r1cs.nnz() as f64 / native.nnz() as f64}),
+  );
+  out.f(
+    "input_digest",
+    digest_of(
+      "ccs",
+      &[
+        ("steps", steps.to_string()),
+        ("seed", seed.to_string()),
+        ("x0", fe_hex(&x0)),
+      ],
+    ),
+  );
+  let mut sem = encode(&native);
+  sem.extend(encode(&r1cs));
+  for v in &a.io {
+    sem.extend_from_slice(v.to_repr().as_ref());
+  }
+  out.f("result_digest", sha256_hex(&sem));
+  if !ok {
+    return Err(format!(
+      "oracle rejected: native {native_ok:?}, r1cs {r1cs_ok:?}"
+    ));
+  }
+  Ok(())
+}
+
 fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
   let variant = || -> Result<String, String> { arg(args, "variant", Some("direct".to_string())) };
   let seed = || -> Result<u64, String> { arg(args, "seed", Some(101)) };
@@ -407,6 +505,7 @@ fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
         v => Err(format!("unknown variant {v}")),
       }
     }
+    "ccs" => scenario_ccs(out, args),
     other => Err(format!("unknown scenario '{other}'")),
   }
 }
@@ -415,7 +514,7 @@ fn main() {
   let argv: Vec<String> = std::env::args().skip(1).collect();
   let Some(name) = argv.first().cloned() else {
     eprintln!(
-      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain> [key=value ...]"
+      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs> [key=value ...]"
     );
     std::process::exit(2);
   };

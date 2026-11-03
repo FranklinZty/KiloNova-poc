@@ -27,7 +27,7 @@ Status as of 2026-10-05. Details are in `PLAN.md` and `docs/baseline-status.md`.
 2. Index-span folding (Span variant). ✅
 3. Multi-step non-uniform IVC. ⛔ Blocked by B15; the 1-step bootstrap verifies.
 4. Compressed SNARK / independent final verifier. ⏳ (P7)
-5. Native high-degree CCS proving. ⏳ (P2/P3)
+5. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; folding and proving over CCS ⏳ (P3)
 
 ## Build & test
 
@@ -58,3 +58,12 @@ Conventions:
 - `--mem-cap-mb` is enforced with `RLIMIT_AS` on Linux only; records say `mem_cap_enforced`.
 - Raw child stdout/stderr are kept in `results/raw/logs/<run_id>.{out,err}`. Records are append-only.
 - Laptop numbers are development data only. Formal runs happen on the dedicated host (PLAN.md §5.2).
+
+## CCS reference oracle (P2)
+
+`ccs/` (crate `kn-ccs`) builds native CCS relations, including high-degree ones written with repeated multisets, and checks ACCS/CCCS instance–witness pairs. It is a slow, independent oracle for P3: generic over `ff::PrimeField`, with no dependency on `kilonova/`, and with the same conventions (`z = (w ‖ u ‖ io)`, little-endian MLE bits, Nova-style padding). Plan and report: `docs/P2-plan.md`, `docs/P2-report.md`.
+
+```bash
+cargo test -p kn-ccs --release
+target/release/kn-run scenario ccs steps=1024 --seed 101     # fifth-power chain: native CCS vs R1CS
+```

@@ -1,0 +1,14 @@
+[package]
+name = "kn-ccs"
+version = "0.1.0"
+edition = "2021"
+description = "KiloNova P2: native CCS builder and independent ACCS/CCCS reference checker (ff-generic)"
+publish = false
+
+[dependencies]
+ff = "0.13.0"
+rand_core = "0.6"
+rand_chacha = "0.3"
+
+[dev-dependencies]
+halo2curves = { version = "0.9.0", features = ["std", "bits", "derive_serde"] }

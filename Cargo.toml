@@ -1,4 +1,4 @@
 [workspace]
-members = ["NIFS-circuit", "Nova", "tools/kn-run"]
+members = ["NIFS-circuit", "Nova", "ccs", "tools/kn-run"]
 # folding/ is a standalone PoC with its own Cargo.lock (versions.lock).
 exclude = ["folding"]

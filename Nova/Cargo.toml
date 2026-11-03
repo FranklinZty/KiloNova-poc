@@ -46,6 +46,7 @@ sha2 = "0.10.7"
 proptest = "1.6.0"
 rand = "0.8.5"
 expect-test = "1.5.1"
+kn-ccs = { path = "../ccs" }   # P2 reference oracle (conventions cross-test)
 
 [[bench]]
 name = "recursive-snark"
