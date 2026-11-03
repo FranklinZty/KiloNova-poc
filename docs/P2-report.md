@@ -1,6 +1,6 @@
 # P2 acceptance report: native CCS construction and ACCS reference checker
 
-Date: 2026-10-20. Plan: `docs/P2-plan.md`. Base: `de3bd5d` (P1) plus the uncommitted P2 changes, so the records say `implementation_dirty: true`.
+Date: 2026-10-20. Plan: `docs/P2-plan.md`. Base: `de3bd5d` (P1). P2 is committed as `0b440239f5a82aebc48587fbcc843ce2adcd60f5` (`versions.lock` `p2_commit`); the records predate the commit, so they say `implementation_dirty: true`.
 
 ## 1. Goal
 

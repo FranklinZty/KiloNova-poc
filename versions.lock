@@ -8,7 +8,7 @@ hfs_transcript      = 1                             # Nova/src/kilonova/transcri
 workspace_members   = ["NIFS-circuit", "Nova", "ccs", "tools/kn-run"]  # folding/ is excluded (own Cargo.lock); kn-run added in P1, ccs (kn-ccs) in P2
 p0_commit           = "72f9596336a15aad7d54c8f5a3dc4e2fe59d74fe"
 p1_commit           = "c9674cdac4565a01883f1aa2349e801e1717ed85"
-p2_commit           = "TO FILL: git rev-parse HEAD after committing the P2 changes"
+p2_commit           = "0b440239f5a82aebc48587fbcc843ce2adcd60f5"
 
 [toolchain]
 pinned              = "1.92.0"                      # rust-toolchain.toml; measured in docs/P0-plan.md
