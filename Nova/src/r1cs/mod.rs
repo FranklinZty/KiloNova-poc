@@ -130,7 +130,14 @@ impl<E: Engine> R1CSShape<E> {
     let num_cons = self.num_cons;
     let num_vars = self.num_vars;
     let ck_hint = ck_floor(self);
-    E::CE::setup(b"ck", max(max(num_cons, num_vars), ck_hint))
+    // Round up to a power of two: Spartan/IPA compression commits to the padded shape
+    // (`pad()` rounds to the next power of two) and Spark to power-of-two vectors. Upstream
+    // Nova did this rounding in Pedersen `setup`; this fork's Pedersen `setup` allocates
+    // exactly `n` generators, so the rounding lives here (B18).
+    E::CE::setup(
+      b"ck",
+      max(max(num_cons, num_vars), ck_hint).next_power_of_two(),
+    )
   }
 
   /// Returns the digest of the `R1CSShape`
