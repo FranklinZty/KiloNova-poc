@@ -477,6 +477,263 @@ fn scenario_ccs(out: &mut Output, args: &Args) -> Result<(), String> {
   Ok(())
 }
 
+/// P3: native-field HFS (transcript v2) without recursion. Folds `steps` fresh instances of the
+/// two-predicate wiring-pair family (alternating k = 0, 1) into one running instance: step 0 is
+/// a (μ, ν) = (0, 1) fold, every later step a (1, 1) fold. Each step runs the prover, the
+/// succinct verifier (whose output must equal the prover's), the native decider and the
+/// independent kn-ccs oracle (plus the index opening). Times are per call, in process.
+fn scenario_hfs(out: &mut Output, args: &Args) -> Result<(), String> {
+  use kn_ccs::r#gen::PairTemplate;
+  use nova_snark::kilonova::hfs::{Direct, Span};
+  let tpl = match arg(args, "template", Some("r1cs".to_string()))?.as_str() {
+    "r1cs" => PairTemplate::R1cs,
+    "power5" => PairTemplate::Power5,
+    t => return Err(format!("unknown template {t} (r1cs | power5)")),
+  };
+  let steps: usize = arg(args, "steps", Some(100))?;
+  let reps: usize = arg(args, "reps", Some(1))?;
+  let seed: u64 = arg(args, "seed", None)?;
+  if steps == 0 || reps == 0 {
+    return Err("steps and reps must be >= 1".into());
+  }
+  match arg(args, "variant", Some("direct".to_string()))?.as_str() {
+    "direct" => hfs::run::<Direct>(out, tpl, steps, reps, seed),
+    "span" => hfs::run::<Span>(out, tpl, steps, reps, seed),
+    v => Err(format!("unknown variant {v}")),
+  }
+}
+
+mod hfs {
+  use super::*;
+  use kn_ccs::{
+    accs::check_accs,
+    r#gen::{wiring_pair, PairTemplate},
+    AccsInstance, Family,
+  };
+  use nova_snark::kilonova::hfs::{
+    decide, CcsShape, CcsTemplate, HfsParams, IncomingInstance, RunningInstance, RunningWitness,
+    Variant, NIFS,
+  };
+
+  fn bytes<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, String> {
+    bincode::serde::encode_to_vec(v, bincode::config::legacy()).map_err(|e| e.to_string())
+  }
+
+  fn stats(v: &[f64]) -> Value {
+    let mut s = v.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = s.len();
+    json!({
+      "sum": s.iter().sum::<f64>(),
+      "median": if n % 2 == 1 { s[n / 2] } else { (s[n / 2 - 1] + s[n / 2]) / 2.0 },
+      "min": s[0],
+      "max": s[n - 1],
+    })
+  }
+
+  fn oracle<V: Variant<E1>>(
+    pp: &HfsParams<E1>,
+    fam: &Family<F1>,
+    u: &RunningInstance<E1, V>,
+    w: &RunningWitness<E1>,
+  ) -> Result<(), String> {
+    let accs = AccsInstance {
+      comm_w: u.comm_w,
+      u: u.u,
+      io: u.io.clone(),
+      lambda: w.lambda.clone(),
+      r_x: u.r_x.clone(),
+      r_y: u.r_y.clone(),
+      v: u.v.clone(),
+    };
+    check_accs(fam, &accs, &w.w, |x| pp.commit_w(x).unwrap()).map_err(|e| e.to_string())?;
+    V::check_opening(pp, &u.index, &w.lambda).map_err(|e| e.to_string())
+  }
+
+  pub fn run<V: Variant<E1>>(
+    out: &mut Output,
+    tpl: PairTemplate,
+    steps: usize,
+    reps: usize,
+    seed: u64,
+  ) -> Result<(), String> {
+    let members = (0..2)
+      .map(|k| wiring_pair::<F1>(tpl, k, reps, None).map(|c| c.0))
+      .collect::<Result<Vec<_>, _>>()
+      .map_err(|e| e.to_string())?;
+    let fam = Family::new(members).map_err(|e| e.to_string())?;
+    let c0 = fam.member(0);
+    let shapes = (0..2)
+      .map(|k| {
+        let c = fam.member(k);
+        let mats = c.matrices.iter().map(|m| m.entries().to_vec()).collect();
+        CcsShape::new(c.m, c.num_w, c.num_io, mats)
+      })
+      .collect::<Result<Vec<_>, _>>()
+      .map_err(|e| e.to_string())?;
+    let template = CcsTemplate::new(
+      c0.template.t,
+      c0.template.multisets.clone(),
+      c0.template.coeffs.clone(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    out.f("scheme", format!("kilonova-hfs-v2-{}", V::NAME));
+    out.f("workload", format!("wiring-pair-{}-reps{reps}", tpl.name()));
+    out.f("protocol_version", 2);
+    out.f("transcript_version", 2);
+    out.f(
+      "security_profile",
+      format!(
+        "pallas (E1) native-field HFS v2, no recursion; pedersen; poseidon RO2 over E1::Scalar (D1 option (a) assumption); challenge {NUM_CHALLENGE_BITS} bits; non-ZK"
+      ),
+    );
+    out.f("K", 2);
+    out.f("T", steps);
+    out.f("mu", 1);
+    out.f("nu", 1);
+    out.d("mu_nu_note", "step 0 is a (mu, nu) = (0, 1) fold, steps 1.. are (1, 1)");
+    out.f("d", c0.degree());
+    out.f("t", c0.t());
+    out.f("q", c0.q());
+    out.f("m_app", c0.m);
+    out.f("n_app", c0.n());
+    out.f("w_app", c0.num_w);
+    out.f("N_total", c0.nnz() + fam.member(1).nnz());
+    let r = "P3 native folding: no augmented circuit, no recursion";
+    for k in ["m_aug", "n_aug", "padding", "setup_iterations"] {
+      out.why(k, r);
+    }
+    out.why(
+      "recursive_ms",
+      "no recursion in P3; per-fold prover/verifier/decider times are in details.per_step",
+    );
+    out.why(
+      "verify_warm_ms",
+      "no RecursiveSNARK::verify in P3; per-fold verifier and decider times are in details.per_step",
+    );
+    out.why(
+      "checkpoint_bytes",
+      "no RecursiveSNARK checkpoint in P3; running witness bytes are in details",
+    );
+    out.why(
+      "proof_bytes",
+      "proof_bytes is the P7 compressed proof; per-fold NIFS proof bytes (bincode legacy) are in details.per_step.nifs_proof_bytes",
+    );
+    out.why(
+      "public_state_bytes",
+      "no recursive public state before P5; running-instance bytes are in details.per_step.instance_bytes",
+    );
+
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let xs: Vec<F1> = (0..steps).map(|_| F1::random(&mut rng)).collect();
+    out.f(
+      "input_digest",
+      digest_of(
+        "hfs",
+        &[
+          ("variant", V::NAME.into()),
+          ("template", tpl.name().into()),
+          ("reps", reps.to_string()),
+          ("steps", steps.to_string()),
+          ("seed", seed.to_string()),
+          ("x0", fe_hex(&xs[0])),
+        ],
+      ),
+    );
+
+    let t = Instant::now();
+    let pp = HfsParams::<E1>::new(template, shapes).map_err(|e| e.to_string())?;
+    out.f("setup_ms", ms(t));
+    out.d("hfs_digest", fe_hex(&pp.digest()));
+    out.d(
+      "dims",
+      json!({"m": pp.m(), "n": pp.n(), "s": pp.s(), "s_prime": pp.s_prime(),
+             "deg_x": pp.template().deg_x(), "num_w": pp.num_w(), "num_io": pp.num_io()}),
+    );
+
+    let (mut witness_ms, mut ok) = (0.0, true);
+    let mut per = (
+      Vec::new(),
+      Vec::new(),
+      Vec::new(),
+      Vec::new(),
+      Vec::new(),
+      Vec::new(),
+    );
+    let mut acc: Option<(RunningInstance<E1, V>, RunningWitness<E1>)> = None;
+    let mut result = Vec::new();
+    let mut failure = None;
+    for (step, x) in xs.iter().enumerate() {
+      let k = step % 2;
+      let t = Instant::now();
+      let (_, a) = wiring_pair(tpl, k, reps, Some(*x)).map_err(|e| e.to_string())?;
+      let a = a.ok_or("no assignment")?;
+      let inc = IncomingInstance::new(&pp, k, &a.w, a.io.clone()).map_err(|e| e.to_string())?;
+      witness_ms += ms(t);
+      let (ru, rw): (Vec<_>, Vec<_>) = acc.iter().cloned().unzip();
+
+      let t = Instant::now();
+      let po = NIFS::<E1, V>::prove(&pp, &ru, &rw, std::slice::from_ref(&inc), &[a.w])
+        .map_err(|e| format!("step {step}: prove: {e}"))?;
+      per.0.push(ms(t));
+      let pb = bytes(&po.proof)?;
+      per.4.push(pb.len());
+      result.extend_from_slice(&pb);
+
+      let t = Instant::now();
+      let ver = NIFS::<E1, V>::verify(&pp, &ru, std::slice::from_ref(&inc), &po.proof);
+      per.1.push(ms(t));
+      let t = Instant::now();
+      let dec = decide(&pp, &po.instance, &po.witness);
+      per.2.push(ms(t));
+      let t = Instant::now();
+      let ora = oracle(&pp, &fam, &po.instance, &po.witness);
+      per.3.push(ms(t));
+      per.5.push(bytes(&po.instance)?.len());
+      let step_ok = match &ver {
+        Ok((u, ch)) => *u == po.instance && *ch == po.challenges,
+        Err(_) => false,
+      } && dec.is_ok()
+        && ora.is_ok();
+      if !step_ok && failure.is_none() {
+        failure = Some(format!(
+          "step {step}: verifier {:?}, decider {dec:?}, oracle {ora:?}",
+          ver.as_ref().map(|_| ())
+        ));
+      }
+      ok &= step_ok;
+      acc = Some((po.instance, po.witness));
+    }
+    let (u, w) = acc.unwrap();
+    out.f("witness_ms", witness_ms);
+    out.f("verification_ok", ok);
+    out.d(
+      "per_step",
+      json!({
+        "prove_ms": per.0, "verify_ms": per.1, "decide_ms": per.2, "oracle_ms": per.3,
+        "nifs_proof_bytes": per.4, "instance_bytes": per.5,
+      }),
+    );
+    out.d(
+      "summary",
+      json!({
+        "prove_ms": stats(&per.0), "verify_ms": stats(&per.1), "decide_ms": stats(&per.2),
+        "oracle_ms": stats(&per.3),
+        "nifs_proof_bytes_first": per.4[0], "nifs_proof_bytes_last": per.4[steps - 1],
+        "running_witness_bytes": bytes(&w)?.len(),
+      }),
+    );
+    out.d("timing_note", "in-process Instant timers per call; development machine, no performance claim");
+    result.extend_from_slice(&bytes(&u)?);
+    out.f("result_digest", sha256_hex(&result));
+    match failure {
+      None => Ok(()),
+      Some(e) => Err(e),
+    }
+  }
+}
+
 fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
   let variant = || -> Result<String, String> { arg(args, "variant", Some("direct".to_string())) };
   let seed = || -> Result<u64, String> { arg(args, "seed", Some(101)) };
@@ -506,6 +763,7 @@ fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
       }
     }
     "ccs" => scenario_ccs(out, args),
+    "hfs" => scenario_hfs(out, args),
     other => Err(format!("unknown scenario '{other}'")),
   }
 }
@@ -514,7 +772,7 @@ fn main() {
   let argv: Vec<String> = std::env::args().skip(1).collect();
   let Some(name) = argv.first().cloned() else {
     eprintln!(
-      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs> [key=value ...]"
+      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs> [key=value ...]"
     );
     std::process::exit(2);
   };
