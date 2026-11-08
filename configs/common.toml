@@ -13,7 +13,19 @@ deg_x            = 3          # X-round evaluations at {0,1,2,3} = d+1
 deg_y            = 2          # Y-round evaluations at {0,1,2}
 gamma_powers     = [0, 1, 2, 3]            # running M0..M2, zero-check (docs/protocol-spec.md N7)
 delta_powers     = [0, 1, 2, 3, 4, 5, 6]   # running M0..M2, running z, new M0..M2 (N8)
-fold_field       = "E::Base"  # KNOWN ISSUE B15: must become the instance's native field in P3
+fold_field       = "E::Base"  # v1 (recursion path) only: KNOWN ISSUE B15, fixed in v2 below; recursion moves to v2 in P5
+
+[protocol_v2]                 # P3 native-field HFS (Nova/src/kilonova/hfs, docs/protocol-spec.md section 8)
+version          = 2          # transcript.rs::v2::HFS_TRANSCRIPT_VERSION
+fold_field       = "E::Scalar"
+template         = "any (t, q, d): kn_ccs::Template / hfs::CcsTemplate"
+mu_nu            = "mu running + nu incoming, mu + nu >= 1"
+deg_x            = "max(d + 1, 2)"
+deg_y            = 2
+sumcheck_order   = "round i binds bit i (least significant first), no reversal"
+sponge           = "Poseidon over E::Scalar (E::RO2)"            # D1 option (a) assumption
+commitment_absorb = "x limbs, y limbs (4 x 64 bits, LSB first), is_infinity"
+tags             = ["0x4b4e484653020001", "0x4b4e484653020002", "0x4b4e484653020003", "0x4b4e484653020004"]
 
 [setup]
 max_iterations   = 12         # kilonova::MAX_SETUP_ITERATIONS

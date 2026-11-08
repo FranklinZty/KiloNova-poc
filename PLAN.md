@@ -2,7 +2,7 @@
 
 Version: 2026-10-05 (revision 2). Supersedes the 2026-09-21 plan, whose original Chinese text is kept in `docs/PLAN.zh.md`.
 
-Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
+Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3.0 decision memo 2026-11-03 (`docs/P3.0-decision.md`; D1 recommendation (a), not yet confirmed). P3 executed 2026-11-08 for native folding (`docs/P3-report.md`); the recursion-side item (flipping `test_known_issue_b15_*`) moves to P5. P4–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
 
 ## 0. What changed in this revision, and why
 
@@ -118,7 +118,9 @@ Acceptance:
 - Tampered witnesses, out-of-range matrix indices, wrong dimensions and non-canonical encodings are rejected. Degenerate all-zero matrices and boundary sizes have tests.
 - Semantics are preserved across CCS embedding and padding, and the overhead is measured.
 
-### P3: KiloNova native folding over the correct field, with negative tests (10–16 days; depends on P2; P3.0 decides D1)
+### P3: KiloNova native folding over the correct field, with negative tests (done 2026-11-08 for native folding; 10–16 days; depends on P2; P3.0 decides D1)
+
+Delivered: `Nova/src/kilonova/hfs/` (native-field HFS v2: any CCS template, μ running + ν incoming inputs, Direct and Span, prover, succinct verifier, decider), transcript v2 (`transcript.rs::v2`, spec §8, D1 option (a) assumed), frozen vectors, negative tests with detection layers, property tests, `kn-scenario hfs`. Plan `docs/P3-plan.md`, report `docs/P3-report.md`. Open: `test_known_issue_b15_*` documents v1, which `RecursiveSNARK` still uses; it flips in P5 when recursion moves to v2.
 
 Goal: a complete HFS without recursion, run over the native field of the folded relation, that lets different matrix indices enter the fold.
 
@@ -494,13 +496,14 @@ Gates:
 - G3 (P7–P8): independent final verification, statement binding and fair baselines are complete. Full formal experiments may start.
 - G4 (P9–P10): raw data, statistics, reproduction and paper-scope alignment are complete. The research-artifact release bar is met.
 
-Current status (2026-10-20):
+Current status (2026-11-08):
 
 | Period | Status | Evidence |
 |---|---|---|
 | P0 | **Done**, with open blocker B15 | `docs/baseline-status.md`; `cargo test -p nova-snark --release --lib kilonova -- --test-threads=1` → 25 passed, 5 ignored (B15 and the perf harness) |
 | P1 | **Done** (OOM check pending a Linux run) | `docs/P1-report.md`; `target/release/kn-run selfcheck` → 16 checks, 0 failed; kilonova suite → 28 passed, 5 ignored |
 | P2 | **Done** | `docs/P2-report.md`; `cargo test -p kn-ccs --release` → 20 passed; kilonova suite → 29 passed, 5 ignored; `results/raw/p2-ccs.jsonl` |
-| P3–P10 | Not started | — |
+| P3 | **Done for native folding** (no recursion; D1 option (a) assumed in transcript v2, not yet confirmed; no independent review yet) | `docs/P3-report.md`; kilonova suite → 53 passed, 5 ignored (4 × B15 in the v1 recursion path, 1 perf harness); `kilonova::hfs` → 20 passed; `cargo test -p kn-ccs --release` → 21 passed; `results/raw/p3-hfs.jsonl` (28 records). B15 fixed for native folding, still open for recursion (P5). |
+| P4–P10 | Not started | — |
 
 A status changes only on the commands, results and versions in an acceptance report. Creating or revising this plan does not mean prototype code, tests or experiments have been executed beyond what the P0 reports show.
