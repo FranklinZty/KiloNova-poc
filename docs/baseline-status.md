@@ -51,6 +51,7 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | **B15** | **HFS over E::Base for R1CS over E::Scalar** (`field_switch` is not a homomorphism) | **Open, critical path.** Evidence: `test_known_issue_b15_scalar_r1cs_not_foldable_over_base`, plus the fast-fail message in `prove_step`. Fix in **P3** (HFS over the native field) and **P5** (CycleFold-style group-operation delegation, or non-native field verification), decided by the P3.0 spike. |
 | B16 (new) | σ,τ not absorbed before δ; ε,θ not absorbed before ρ (prover could choose them after seeing the challenge) | **Fixed** (native and gadget, both variants); `test_nifs_rho_binds_y_claims` |
 | B17 (new) | Commitment keys sized from unpadded shapes; `RecursiveSNARK::new` panicked (`ck.len() >= v.len()`) | **Fixed**: keys sized from padded shapes and `num_vars_max` |
+| **B18** (new, found 2026-11-03 in P3.0) | Inherited Nova tests fail, and did so before P0 (P0 touched none of `provider/`, `nova/`, `spartan/`, `r1cs/`, `traits/` or the lock file): `nova::tests::test_ivc_{nondet,nontrivial}_with_compression` and `test_ivc_nontrivial_with_spark_compression` panic at `provider/pedersen.rs:340` (commitment key shorter than the padded vector, like B17); `test_pp_digest` has a stale pinned digest. Uniform `RecursiveSNARK` tests pass. | **Open.** Not on the B15 path. Must be fixed before P7 (compression reuses Spartan/IPA) and before Nova is used as a P8 baseline. |
 
 ## 5. Tests added in P0
 

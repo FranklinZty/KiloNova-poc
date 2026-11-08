@@ -27,6 +27,8 @@ mod circuit;
 pub mod nifs;
 pub mod relation;
 pub mod span;
+#[cfg(test)]
+mod spike_p3;
 #[doc(hidden)]
 pub mod test_utils;
 pub mod transcript;

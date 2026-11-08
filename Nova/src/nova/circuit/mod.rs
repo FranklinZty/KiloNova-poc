@@ -24,7 +24,7 @@ use crate::{
 use ff::Field;
 use serde::{Deserialize, Serialize};
 
-mod r1cs;
+pub(crate) mod r1cs;
 use r1cs::{AllocatedR1CSInstance, AllocatedRelaxedR1CSInstance};
 
 #[derive(Debug, Serialize, Deserialize)]

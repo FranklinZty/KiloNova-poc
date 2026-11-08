@@ -29,7 +29,7 @@ use once_cell::sync::OnceCell;
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 
-mod circuit;
+pub(crate) mod circuit;
 pub mod nifs;
 
 use circuit::{NovaAugmentedCircuit, NovaAugmentedCircuitInputs};
