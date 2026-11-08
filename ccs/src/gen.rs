@@ -141,3 +141,116 @@ pub fn fifth_power_r1cs<F: PrimeField>(
   }
   b.build()
 }
+
+/// Template of a [`wiring_pair`] family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PairTemplate {
+  /// R1CS (t = 3, d = 2).
+  R1cs,
+  /// `power(5)`: `(M₀ z)^5 − M₁ z = 0` (t = 2, d = 5).
+  Power5,
+}
+
+impl PairTemplate {
+  pub fn name(self) -> &'static str {
+    match self {
+      PairTemplate::R1cs => "r1cs",
+      PairTemplate::Power5 => "power5",
+    }
+  }
+
+  pub fn template<F: PrimeField>(self) -> Template<F> {
+    match self {
+      PairTemplate::R1cs => Template::r1cs(),
+      PairTemplate::Power5 => Template::power(5),
+    }
+  }
+}
+
+/// Predicate `k ∈ {0, 1}` of a two-member family whose members share the template and the
+/// dimensions but differ in wiring (the P3 / B15 fixture). Coefficients include negative values,
+/// and every value is a full-width field element, so products wrap. `reps ≥ 1` copies of the
+/// gadget are chained (the output of copy r is the input of copy r + 1, as a witness); io is
+/// `(x, y)`.
+///
+/// - R1CS, k = 0: `a = x·x`, `a·x = y + 3x − 11`. k = 1: `a = x·(−x)`, `(a + 2)·x = y − 7`.
+/// - power(5), k = 0: `x⁵ = w + 3`, `(w + x)⁵ = y − x`. k = 1: `(2x − 1)⁵ = w`,
+///   `(w − x)⁵ = y + 2x`.
+///
+/// Per copy: 2 rows. Witness: `reps` gadget values plus `reps − 1` chained outputs.
+pub fn wiring_pair<F: PrimeField>(
+  template: PairTemplate,
+  k: usize,
+  reps: usize,
+  x: Option<F>,
+) -> Result<(Ccs<F>, Option<Assignment<F>>), CcsError> {
+  if k > 1 || reps == 0 {
+    return Err(CcsError::Family(format!(
+      "wiring_pair needs k in {{0, 1}} and reps >= 1 (got k = {k}, reps = {reps})"
+    )));
+  }
+  let one = |v: Var| -> Lc<F> { vec![(v, F::ONE)] };
+  let c = |v: u64| F::from(v);
+  let p5 = |v: F| v.pow_vartime([5]);
+  let mut b = NativeCcsBuilder::new(template.template())?;
+  let mut xv = b.alloc_io(x);
+  for r in 0..reps {
+    let xval = b.value(xv);
+    let last = r + 1 == reps;
+    let out = |b: &mut NativeCcsBuilder<F>, v: Option<F>| {
+      if last {
+        b.alloc_io(v)
+      } else {
+        b.alloc_w(v)
+      }
+    };
+    xv = match (template, k) {
+      (PairTemplate::R1cs, 0) => {
+        let a = b.alloc_w(xval.map(|x| x.square()));
+        let y = out(&mut b, xval.map(|x| x.square() * x - x * c(3) + c(11)));
+        b.push_row(vec![one(xv), one(xv), one(a)])?;
+        b.push_row(vec![
+          one(a),
+          one(xv),
+          vec![(y, F::ONE), (xv, c(3)), (Var::One, -c(11))],
+        ])?;
+        y
+      }
+      (PairTemplate::R1cs, _) => {
+        let a = b.alloc_w(xval.map(|x| -x.square()));
+        let y = out(&mut b, xval.map(|x| (c(2) - x.square()) * x + c(7)));
+        b.push_row(vec![one(xv), vec![(xv, -F::ONE)], one(a)])?;
+        b.push_row(vec![
+          vec![(a, F::ONE), (Var::One, c(2))],
+          one(xv),
+          vec![(y, F::ONE), (Var::One, -c(7))],
+        ])?;
+        y
+      }
+      (PairTemplate::Power5, 0) => {
+        let w = b.alloc_w(xval.map(|x| p5(x) - c(3)));
+        let y = out(&mut b, xval.map(|x| p5(p5(x) - c(3) + x) + x));
+        b.push_row(vec![one(xv), vec![(w, F::ONE), (Var::One, c(3))]])?;
+        b.push_row(vec![
+          vec![(w, F::ONE), (xv, F::ONE)],
+          vec![(y, F::ONE), (xv, -F::ONE)],
+        ])?;
+        y
+      }
+      (PairTemplate::Power5, _) => {
+        let w = b.alloc_w(xval.map(|x| p5(x.double() - F::ONE)));
+        let y = out(
+          &mut b,
+          xval.map(|x| p5(p5(x.double() - F::ONE) - x) - x.double()),
+        );
+        b.push_row(vec![vec![(xv, c(2)), (Var::One, -F::ONE)], one(w)])?;
+        b.push_row(vec![
+          vec![(w, F::ONE), (xv, -F::ONE)],
+          vec![(y, F::ONE), (xv, c(2))],
+        ])?;
+        y
+      }
+    };
+  }
+  b.build()
+}
