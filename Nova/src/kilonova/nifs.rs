@@ -905,10 +905,16 @@ mod tests {
     }
   }
 
-  /// Known issue B15 (regression evidence, flip the assertion once fixed): the HFS runs over
-  /// `E::Base` on projected witnesses, while the R1CS is defined over `E::Scalar`. An R1CS
-  /// instance that is satisfied over `E::Scalar` but uses a negative coefficient (here
-  /// `(w0 - w1) * 1 = 0`) and a wrapping product (`w0 * w0 = x0`) cannot be folded.
+  /// Known issue B15 (regression evidence for **v1**): this v1 HFS runs over `E::Base` on
+  /// projected witnesses, while the R1CS is defined over `E::Scalar`. An R1CS instance that is
+  /// satisfied over `E::Scalar` but uses a negative coefficient (here `(w0 - w1) * 1 = 0`) and
+  /// a wrapping product (`w0 * w0 = x0`) cannot be folded.
+  ///
+  /// Status (P3, 2026-11-08): **fixed for native folding in transcript v2**
+  /// (`kilonova::hfs`): `hfs::tests::test_b15_instance_class_folds_in_v2` folds this exact
+  /// shape over `E::Scalar`. The v1 path asserted here is still the one used by
+  /// `RecursiveSNARK`, so recursion stays affected until P5 moves it onto v2. Delete or flip
+  /// this test only together with that switch.
   #[test]
   fn test_known_issue_b15_scalar_r1cs_not_foldable_over_base() {
     type E = PallasEngine;
@@ -944,7 +950,7 @@ mod tests {
     let res = NIFS::prove(&ck, &ro_consts, &F::ZERO, &S, 0, &U1, &W1, &U, &W);
     assert!(
       res.is_err(),
-      "B15 appears fixed: update this test and docs/baseline-status.md"
+      "B15 appears fixed in the v1 path: update this test and docs/baseline-status.md"
     );
   }
 }

@@ -24,6 +24,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 mod circuit;
+pub mod hfs;
 pub mod nifs;
 pub mod relation;
 pub mod span;
@@ -1254,13 +1255,13 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "known issue B15: HFS over E::Base cannot fold E::Scalar R1CS; see docs/baseline-status.md"]
+  #[ignore = "known issue B15: v1 HFS over E::Base cannot fold E::Scalar R1CS (native folding fixed in v2, kilonova::hfs; recursion pending P5); see docs/baseline-status.md"]
   fn test_ivc_nontrivial_nonuniform_smoke() {
     run_nonuniform_trace_test(&[0usize, 2usize]);
   }
 
   #[test]
-  #[ignore = "known issue B15: HFS over E::Base cannot fold E::Scalar R1CS; see docs/baseline-status.md"]
+  #[ignore = "known issue B15: v1 HFS over E::Base cannot fold E::Scalar R1CS (native folding fixed in v2, kilonova::hfs; recursion pending P5); see docs/baseline-status.md"]
   fn test_ivc_nontrivial_nonuniform() {
     run_nonuniform_trace_test(&[0usize, 1usize, 2usize]);
   }
