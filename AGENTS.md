@@ -6,11 +6,13 @@
 - **P1 harness** (`tools/kn-run`, `results/schema.json`): every measurement goes through `kn-run` so records share one format. See `docs/P1-report.md`.
 - **P2 oracle** (`ccs/`, crate `kn-ccs`): native CCS builder and the independent ACCS/CCCS reference checker, ff-generic, with kilonova's conventions pinned by `test_kn_ccs_matches_kilonova_conventions`. Use it as the oracle in P3; do not make it depend on `kilonova/`. See `docs/P2-report.md`.
 - `Nova/src/kilonova/` is the **normative** implementation (`docs/protocol-spec.md`). `folding/` is a reference oracle only. `NIFS-circuit/` holds the historical cost model behind the old paper figures; never reuse its numbers.
-- **Open critical blocker B15:** the HFS folds over `E::Base` while the R1CS lives over `E::Scalar`. Multi-step IVC tests are `#[ignore = "known issue B15 …"]`; the 1-step bootstrap passes. The fix is P3/P5 (see PLAN.md §0 and the P3.0 decision spike).
+- **P3 native-field HFS v2** (`Nova/src/kilonova/hfs/`): folds over `E::Scalar` for any CCS template and μ running + ν incoming inputs, Direct and Span, transcript v2 (`transcript.rs::v2`, spec §8; Poseidon over `E::Scalar` with 4×64-bit limb commitments, an assumption from D1 option (a) that the maintainer has not confirmed yet). No recursion. Frozen vectors in `hfs/vectors/` (`KN_UPDATE_VECTORS=1` only with a version bump). See `docs/P3-report.md`.
+- **B15:** fixed for native folding in v2; **still open in the v1 recursion path** (`nifs.rs`, `span/`, `RecursiveSNARK`), whose multi-step IVC tests stay `#[ignore = "known issue B15 …"]` until P5 moves recursion onto v2. Do not modify v1 to "fix" it.
 - Invariants that must not regress:
   - The in-circuit HFS verifier is **succinct**. It must never take or re-evaluate the other curve's witness; that made setup diverge (44M constraints).
   - The native and gadget transcripts are identical (`transcript.rs` tags). `test_transcript_native_matches_gadget_*` guards this.
   - Commitment keys are sized from padded shapes.
+  - The v2 verifier (`hfs::NIFS::verify`) reads only instances, proof messages and public parameters (never a witness or a matrix); ε/θ are deferred to `hfs::decide`. Every v2 test also runs the independent kn-ccs oracle.
 
 ## Overview
 
@@ -39,6 +41,9 @@ KiloNova-poc/
 │   ├── P1-report.md        # P1 acceptance report
 │   ├── P2-plan.md          # P2 CCS/ACCS oracle plan
 │   ├── P2-report.md        # P2 acceptance report
+│   ├── P3.0-decision.md    # D1 decision memo (recommends option (a))
+│   ├── P3-plan.md          # P3 native-field HFS plan
+│   ├── P3-report.md        # P3 acceptance report
 │   └── PLAN.zh.md          # original Chinese PLAN (2026-09-21)
 │
 ├── Nova/                   # Core crate: nova-snark v0.42.0
@@ -129,7 +134,8 @@ KiloNova-poc/
 | `mod.rs` | `PredicateSet` trait, `PublicParams`, `RecursiveSNARK`, trace digest |
 | `relation.rs` | `PredicateIndex`, `GlobalStructure`, `FoldedWitness`, `FoldedInstance` with lambda coefficients |
 | `nifs.rs` | `NIFS` with two-phase sumcheck (sc_proof_x + sc_proof_y), cross-term computation |
-| `transcript.rs` | HFS transcript v1 domain tags + in-circuit tag helper (shared by native and gadget) |
+| `transcript.rs` | HFS transcript v1 domain tags + in-circuit tag helper (shared by native and gadget); `v2` submodule (P3) |
+| `hfs/` | P3 native-field HFS v2: `structure.rs` (template, shapes, params, digest), `instance.rs` (Direct/Span), `sumcheck.rs`, `nifs.rs` (prover/verifier, μ/ν inputs), `decider.rs`, `tests.rs`, `vectors/` |
 | `circuit/mod.rs` | `KiloNovaAugmentedCircuit` for recursive verification |
 | `circuit/r1cs.rs` | In-circuit holographic folding verification gadgets |
 | `span/` | Alternative "span" variant (lambda stored directly, not committed) |
@@ -175,6 +181,10 @@ cargo build -p kn-run --release && target/release/kn-run selfcheck --quick
 
 # CCS reference oracle (P2)
 cargo test -p kn-ccs --release
+
+# Native-field HFS v2 (P3) and its kn-run scenario
+cargo test -p nova-snark --release --lib kilonova::hfs -- --test-threads=1
+target/release/kn-run scenario hfs template=r1cs variant=direct steps=100 --seed 101
 
 # Run NIFS-circuit benchmarks
 cargo run -p NIFS-circuit

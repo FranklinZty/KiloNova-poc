@@ -41,14 +41,14 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | B5 | In-circuit M not bound to commit(λ) (G1) | **Closed by design**: decider check (`docs/claim-check-map.md` §3) |
 | B6 | No CompressedSNARK; verify needs witnesses (G2) | Deferred to **P7** |
 | B7 | No in-circuit φ; trace supplied to verifier (G3/G4) | Deferred to **P4/P6** |
-| B8 | NIFS unit tests only fold predicates with identical coefficients | Deferred to **P3** (needs B15 fixed; a non-trivial-coefficient case is now the B15 evidence test) |
-| B9 | `test_cross_predicate_fold_sat` drops sigmas and never calls is_sat | Deferred to **P3** (rewrite with a real cross-predicate NIFS once B15 is fixed) |
-| B10 | Test fixtures use empty matrices, `pp_digest = 42` and zero witnesses | Partly addressed: the setup and bootstrap tests now run real augmented circuits. Fixture rewrite in **P3**. |
+| B8 | NIFS unit tests only fold predicates with identical coefficients | **Closed in P3 for the v2 HFS**: `hfs::tests::test_chain_100_{r1cs,power5}_{direct,span}` fold two predicates with different wiring, negative coefficients and wrapping values for 100 alternating steps, every step accepted by the verifier, the decider and the kn-ccs oracle. The v1 unit tests are unchanged. |
+| B9 | `test_cross_predicate_fold_sat` drops sigmas and never calls is_sat | **Superseded in P3** by the v2 cross-predicate tests (real NIFS, decider and oracle on every fold: the chain tests, `test_mu_nu_combinations`, `proptest_random_ccs_fold`). The v1 test itself is unchanged (v1 is frozen until P5). |
+| B10 | Test fixtures use empty matrices, `pp_digest = 42` and zero witnesses | **Closed for v2 in P3**: v2 tests use `kn_ccs::gen::wiring_pair` and `random_satisfiable` (real matrices, full-field witnesses) and the real structure digest. v1 unit fixtures unchanged. |
 | B11 | `folding/` serial MLE path uses `data[i]` | `folding/` demoted; fix only if it is used as the P2 oracle |
 | B12 | `folding/` silent `zip` truncation and ark-poly invariant violation | As B11 |
 | B13 | 5,620 build artifacts tracked in `folding/target` | `.gitignore` fixed. `git rm -r --cached folding/target` **left to the user**, as decided. |
 | B14 | `folding/` variable order differs from kilonova | As B11; adapter in P2 |
-| **B15** | **HFS over E::Base for R1CS over E::Scalar** (`field_switch` is not a homomorphism) | **Open, critical path.** Evidence: `test_known_issue_b15_scalar_r1cs_not_foldable_over_base`, plus the fast-fail message in `prove_step`. Fix in **P3** (HFS over the native field) and **P5** (CycleFold-style group-operation delegation, or non-native field verification), decided by the P3.0 spike. |
+| **B15** | **HFS over E::Base for R1CS over E::Scalar** (`field_switch` is not a homomorphism) | **Fixed for native folding (P3, HFS v2); open for recursion (P5).** v2 (`Nova/src/kilonova/hfs/`, spec §8) folds over `E::Scalar` with no projection. `hfs::tests::test_b15_instance_class_folds_in_v2` folds the exact counter-example shape (Direct and Span, 10 steps, decider and oracle). The 100-step chains cover the whole class. v1 evidence kept: `test_known_issue_b15_scalar_r1cs_not_foldable_over_base` still asserts that **v1** rejects it, and the 4 multi-step IVC tests stay `#[ignore = "known issue B15 …"]`, because `RecursiveSNARK` still runs v1. P5 moves recursion onto v2 (D1 option (a): CycleFold for the group operations, assumed but not yet confirmed). |
 | B16 (new) | σ,τ not absorbed before δ; ε,θ not absorbed before ρ (prover could choose them after seeing the challenge) | **Fixed** (native and gadget, both variants); `test_nifs_rho_binds_y_claims` |
 | B17 (new) | Commitment keys sized from unpadded shapes; `RecursiveSNARK::new` panicked (`ck.len() >= v.len()`) | **Fixed**: keys sized from padded shapes and `num_vars_max` |
 | **B18** (new, found 2026-11-03 in P3.0) | Inherited Nova tests fail, and did so before P0 (P0 touched none of `provider/`, `nova/`, `spartan/`, `r1cs/`, `traits/` or the lock file): `nova::tests::test_ivc_{nondet,nontrivial}_with_compression` and `test_ivc_nontrivial_with_spark_compression` panic at `provider/pedersen.rs:340` (commitment key shorter than the padded vector, like B17); `test_pp_digest` has a stale pinned digest. Uniform `RecursiveSNARK` tests pass. | **Open.** Not on the B15 path. Must be fixed before P7 (compression reuses Spartan/IPA) and before Nova is used as a P8 baseline. |
@@ -62,6 +62,17 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | `kilonova::nifs::tests::test_nifs_rho_binds_y_claims` | B16 |
 | `kilonova::nifs::tests::test_known_issue_b15_scalar_r1cs_not_foldable_over_base` | B15 evidence; flip when fixed |
 | `kilonova::test_utils::tests::test_transcript_native_matches_gadget_{direct,span}` | Native and gadget transcripts agree, including ρ (P0.3 cross-implementation vector test) |
+
+## 5b. Tests added in P3 (HFS v2, `docs/P3-report.md`)
+
+| Test | Purpose |
+|---|---|
+| `kilonova::hfs::tests::test_chain_100_{r1cs,power5}_{direct,span}` | B8/B10: 100 alternating cross-predicate folds, oracle on every step |
+| `kilonova::hfs::tests::test_b15_instance_class_folds_in_v2` | B15 fixed for native folding |
+| `kilonova::hfs::tests::test_mu_nu_combinations`, `proptest_random_ccs_fold` | μ/ν combinations; random templates |
+| `kilonova::hfs::tests::test_rejects_mismatched_shapes` | explicit rejection of counts, lengths and degrees |
+| `kilonova::hfs::tests::test_negative_matrix`, `proptest_single_tamper_rejected`, `test_noncanonical_field_element_rejected` | tamper cases with their detection layer |
+| `kilonova::hfs::tests::test_vectors_v2_*`, `test_commitment_absorption_matches_ro2`, `test_challenges_agree_bytewise` | frozen v2 vectors |
 
 ## 6. Reproduce
 

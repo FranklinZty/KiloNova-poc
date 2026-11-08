@@ -59,3 +59,28 @@ Status legend: ✅ checked, ⏩ deferred to a later layer by design, ❌ gap.
 | `FoldedWitness` fields (5) | `fold`, `from_r1cs_witness`, `default` | NIFS prover, is_sat (W_proj is only used by the prover now; the circuit no longer takes it) |
 | `NIFS` fields (6) | `prove`, `dummy` | `verify`, gadget |
 | `KiloNovaAugmentedCircuitInputs` (13 fields after P0: W and λ removed, `w` replaced by `z_at_zero`) | `RecursiveSNARK::{new,prove_step}` | circuit `alloc_witness` |
+
+## 5. HFS v2 (P3, native field, no recursion)
+
+Code: `Nova/src/kilonova/hfs/`. Spec: `docs/protocol-spec.md` §8. "Decider" is `hfs::decide`; "Oracle" is the independent `kn_ccs::accs::check_accs` plus the index opening, run by the tests and by `kn-scenario hfs` on every fold. There is no gadget yet (P5).
+
+| Claim | Producer | Native checker | Layer | Test | Status |
+|---|---|---|---|---|---|
+| Template, family and dimensions are well formed | setup | `CcsTemplate::new`, `CcsShape::new`, `HfsParams::new` | Input | `test_rejects_mismatched_shapes` | ✅ |
+| μ + ν ≥ 1; instance lengths (io, r_x, r_y, v, comm_M / λ); predicate id < K; witness lengths | — | `check_inputs`, prover length checks | Input | `test_rejects_mismatched_shapes` | ✅ |
+| Proof shape: s rounds × (deg_x + 1), s′ rounds × 3, σ/τ/ε/θ = μ×t, ν×t, μ×(t+1), ν×(t+1) | prover | `check_proof_shape` | Input | `test_rejects_mismatched_shapes` (incl. a degree-3 proof against a degree-5 template) | ✅ |
+| Inputs bound: tag, digest, μ, ν, every running instance (incl. comm_M or λ), every incoming (k, comm_W, io, ι_k) | transcript | `absorb_inputs` | Verifier (challenges change) | `test_negative_matrix` (running/incoming tampering, predicate id, tags, field order) | ✅ |
+| X start `Σ_i Σ_j γ^{it+j} v_{i,j}`, round consistency, point | prover | `sumcheck::verify` | Verifier | `test_negative_matrix` (every evaluation of every round), `proptest_single_tamper_rejected` | ✅ |
+| X end `c_x` (running row claims σ and the incoming zero-check over τ, for any template) | prover | `NIFS::verify` | Verifier | same | ✅ |
+| σ, τ bound before δ | transcript | `absorb_claims(TAG_X_CLAIMS)` | Verifier | tag cases in `test_negative_matrix` | ✅ |
+| Y start, rounds, end `c_y` | prover | `sumcheck::verify`, `NIFS::verify` | Verifier | `test_negative_matrix` | ✅ |
+| ε, θ bound before ρ | transcript | `absorb_claims(TAG_Y_CLAIMS)` | Verifier / Decider | `test_negative_matrix` (a Y-claims tag mismatch changes only ρ and is caught by the decider) | ✅ |
+| ε_i, θ_l are the true evaluations | prover | **not checked by the verifier** (one equation c_y) | ⏩ Decider via `v*` | `test_negative_matrix`: compensated ε and θ tampering passes the verifier and is rejected by the decider and the oracle (`Claim`) | ✅ deferred by design |
+| Fold output `comm_W*, index*, u*, io*, (r_x′, r_y′), v*` | verifier | `fold_instances` = prover output | — | every positive test asserts verifier output = prover output and equal challenges (bincode bytes) | ✅ |
+| Incoming CCS holds **over its own field** | — | X zero-check over `E::Scalar` | Verifier | `test_b15_instance_class_folds_in_v2`; unsatisfied witness rejected at X round 0 | ✅ (B15 fixed for native folding) |
+| `comm_W* = Com(W*)` | decider | `decide` | Decider | inconsistent running/incoming comm_W, honestly proved | ✅ |
+| Direct: `comm_M*[j] = Com(ck_index_j, λ*)` | decider | `Direct::check_opening` | Decider | inconsistent running index, honestly proved; tampered λ | ✅ |
+| Span: public λ* = witness λ* | decider | `Span::check_opening` | Decider | same | ✅ |
+| `v*_j = Σ_k λ*_k M̃_{k,j}(r_x′, r_y′)`, `v*_t = z̃*(r_y′)` | decider | `decide` (bitwise eq, no shared code with the prover) and the oracle | Decider | all positive tests; tampered outputs | ✅ |
+| v2 serialisation and transcript frozen | — | `vectors/*.txt` | — | `test_vectors_v2_*`, `test_commitment_absorption_matches_ro2`, `test_noncanonical_field_element_rejected` | ✅ |
+| In-circuit v2 verifier, CycleFold for the group operations | — | — | — | — | ⏳ P5 |

@@ -13,21 +13,21 @@ KILONOVA is a preprocessing recursive SNARK for fixed sets of non-uniform predic
 
 # Development Progress
 
-Status as of 2026-10-05. Details are in `PLAN.md` and `docs/baseline-status.md`.
+Status as of 2026-11-08 (P3). Details are in `PLAN.md`, `docs/baseline-status.md` and `docs/P3-report.md`.
 
 ## Holographic Folding Schemes
 
 1. Multi-folding for CCS instances: algebraic PoC in `folding/` (reference only). ✅
-2. Non-uniform (indexed) folding for R1CS, Direct and Span variants: implemented in `Nova/src/kilonova/`, with transcript v1 binding all inputs and helper claims. ✅ for small positive-coefficient instances. ⚠️ General R1CS is blocked by known issue B15 (folding runs over the wrong field).
+2. Non-uniform (indexed) folding, Direct and Span variants. v1 (`Nova/src/kilonova/nifs.rs`, R1CS only, used by the recursion layer) still folds over the wrong field (B15). **v2 (`Nova/src/kilonova/hfs/`, P3) folds over the native field, for any CCS template and μ running + ν incoming inputs, with transcript v2.** ✅ natively (no recursion yet): 100-step alternating R1CS and degree-5 chains are accepted by the verifier, the decider and the kn-ccs oracle on every step.
 3. Index commitment folding. ✅
 
 ## Preprocessing Recursive SNARK
 
 1. Succinct in-circuit HFS verifier; setup converges (2 iterations for K=3). ✅
 2. Index-span folding (Span variant). ✅
-3. Multi-step non-uniform IVC. ⛔ Blocked by B15; the 1-step bootstrap verifies.
+3. Multi-step non-uniform IVC. ⛔ Blocked by B15 in the v1 recursion path; the 1-step bootstrap verifies. P5 moves recursion onto HFS v2 (D1 option (a), CycleFold, pending confirmation).
 4. Compressed SNARK / independent final verifier. ⏳ (P7)
-5. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; folding and proving over CCS ⏳ (P3)
+5. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; native folding over CCS (HFS v2, P3) ✅; recursion over CCS ⏳ (P5)
 
 ## Build & test
 
@@ -66,4 +66,13 @@ Conventions:
 ```bash
 cargo test -p kn-ccs --release
 target/release/kn-run scenario ccs steps=1024 --seed 101     # fifth-power chain: native CCS vs R1CS
+```
+
+## Native-field HFS v2 (P3)
+
+`Nova/src/kilonova/hfs/` is the native-field holographic folding scheme: it folds over `E::Scalar` (fixing B15 for native folding), is generic over the CCS template (t, q, d) and over μ running and ν incoming inputs, and has Direct (committed λ) and Span (public λ) variants. Its transcript is v2 (Poseidon over `E::Scalar`, commitments as 4 × 64-bit limbs; `docs/protocol-spec.md` §8). There is no recursion yet, and the v1 recursion path is unchanged. Plan and report: `docs/P3-plan.md`, `docs/P3-report.md`.
+
+```bash
+cargo test -p nova-snark --release --lib kilonova::hfs -- --test-threads=1
+target/release/kn-run scenario hfs template=power5 variant=direct steps=100 --seed 101 --experiment p3-hfs
 ```
