@@ -592,7 +592,10 @@ mod hfs {
     out.f("T", steps);
     out.f("mu", 1);
     out.f("nu", 1);
-    out.d("mu_nu_note", "step 0 is a (mu, nu) = (0, 1) fold, steps 1.. are (1, 1)");
+    out.d(
+      "mu_nu_note",
+      "step 0 is a (mu, nu) = (0, 1) fold, steps 1.. are (1, 1)",
+    );
     out.f("d", c0.degree());
     out.f("t", c0.t());
     out.f("q", c0.q());
@@ -724,7 +727,10 @@ mod hfs {
         "running_witness_bytes": bytes(&w)?.len(),
       }),
     );
-    out.d("timing_note", "in-process Instant timers per call; development machine, no performance claim");
+    out.d(
+      "timing_note",
+      "in-process Instant timers per call; development machine, no performance claim",
+    );
     result.extend_from_slice(&bytes(&u)?);
     out.f("result_digest", sha256_hex(&result));
     match failure {
