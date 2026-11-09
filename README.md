@@ -13,7 +13,7 @@ KILONOVA is a preprocessing recursive SNARK for fixed sets of non-uniform predic
 
 # Development Progress
 
-Status as of 2026-11-08 (P3). Details are in `PLAN.md`, `docs/baseline-status.md` and `docs/P3-report.md`.
+Status as of 2026-11-09 (P5). Details are in `PLAN.md`, `docs/baseline-status.md`, `docs/P3-report.md` and `docs/P5-report.md`.
 
 ## Holographic Folding Schemes
 
@@ -25,9 +25,9 @@ Status as of 2026-11-08 (P3). Details are in `PLAN.md`, `docs/baseline-status.md
 
 1. Succinct in-circuit HFS verifier; setup converges (2 iterations for K=3). ✅
 2. Index-span folding (Span variant). ✅
-3. Multi-step non-uniform IVC. ⛔ Blocked by B15 in the v1 recursion path; the 1-step bootstrap verifies. P5 moves recursion onto HFS v2 (D1 = (a), CycleFold, decided 2026-11-09).
+3. Multi-step non-uniform IVC. ✅ on HFS v2 with CycleFold (`Nova/src/kilonova/ivc/`, P5, D1 = (a)): K = 2/4, T = 1/16/64 chains verify, Direct and Span; rejections tested. The v1 recursion path (`kilonova::RecursiveSNARK`) is kept unchanged as historical evidence and remains B15-broken.
 4. Compressed SNARK / independent final verifier. ⏳ (P7)
-5. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; native folding over CCS (HFS v2, P3) ✅; recursion over CCS ⏳ (P5)
+5. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; native folding over CCS (HFS v2, P3) ✅; recursion with a native degree-5 application row (template R1CS + power rows) ✅ (P5)
 
 ## Build & test
 

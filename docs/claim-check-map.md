@@ -83,4 +83,26 @@ Code: `Nova/src/kilonova/hfs/`. Spec: `docs/protocol-spec.md` §8. "Decider" is 
 | Span: public λ* = witness λ* | decider | `Span::check_opening` | Decider | same | ✅ |
 | `v*_j = Σ_k λ*_k M̃_{k,j}(r_x′, r_y′)`, `v*_t = z̃*(r_y′)` | decider | `decide` (bitwise eq, no shared code with the prover) and the oracle | Decider | all positive tests; tampered outputs | ✅ |
 | v2 serialisation and transcript frozen | — | `vectors/*.txt` | — | `test_vectors_v2_*`, `test_commitment_absorption_matches_ro2`, `test_noncanonical_field_element_rejected` | ✅ |
-| In-circuit v2 verifier, CycleFold for the group operations | — | — | — | — | ⏳ P5 |
+| In-circuit v2 verifier, CycleFold for the group operations | gadget | `ivc::gadgets::verify_hfs`, `ivc::cyclefold` | — | §6 below | ✅ P5 |
+
+## 6. Recursive layer (P5, `kilonova::ivc`, HFS v2 + CycleFold)
+
+Spec: `docs/protocol-spec.md` §9. "Gadget" is the primary circuit (`ivc/circuit.rs`, `ivc/gadgets.rs`); "CF" is the CycleFold circuit (`ivc/cyclefold.rs`); "Final" is `ivc::RecursiveSNARK::verify` with its layer (`IvcError::layer`).
+
+| Claim | Producer | Checker | Layer | Test | Status |
+|---|---|---|---|---|---|
+| HFS v2 fold of (U_i, u_i) verified in-circuit, same transcript as native | prover π | `verify_hfs` (gated by i ≠ 0) | Gadget → propagates to Final/LastIncoming | `test_transcript_native_matches_gadget_v2_{direct,span}` (challenges, folded scalars, tamper → unsatisfied, gate off in the base case) | ✅ |
+| Gadget is succinct (instances, proof messages, hints only) | — | code structure; size independent of the matrices | — | `test_primary_circuit_is_succinct`, `test_constraint_breakdown`, setup fixed point converges (3 iterations) | ✅ |
+| `comm_W* = comm_W + ρ·comm_W_u`, `comm_M*[j] = comm_M[j] + ρ·ι_{k_prev}[j]` | hints | CF circuit (public inputs built in-circuit from the same limbs) | CF accumulator → Final/CycleFold | `test_cyclefold_circuit` (wrong output, ρ, k), `test_ivc_rejects_unbound_hint`, `test_ivc_rejects_bad_cyclefold_witness` | ✅ |
+| ι selected by the folded instance's predicate inside CF (not an input) | CF | one-hot over K | CF | `test_cyclefold_circuit` (wrong k) | ✅ |
+| CycleFold instance folded into the accumulator with r binding (pp, U, u, T) | prover T | `AllocatedRelaxedR1CSInstanceN::fold_with_r1cs` = `cf_fold_verify` | Gadget | `test_cyclefold_fold_native_matches_gadget` | ✅ |
+| Link: `u_i.io = H(pp, hfs, i, z_0, z_i, trace_i, U_i, cfU_i)` unless base | previous circuit | Gadget equality OR is_base | Gadget → Final | `test_ivc_rejects_broken_state_link`, `test_ivc_rejects_repeated_counter` | ✅ |
+| Step counter, z_0, z_n, schedule, U_n, cfU_n bound at the end | last circuit | `verify`: link hash | Final/LinkHash | `test_ivc_rejects_wrong_claims` (wrong z_0, skipped step, wrong counter, swapped steps, wrong predicate) | ✅ |
+| Predicate id of each step enters the trace in-circuit (constant of the circuit) | circuit k | Poseidon chain; verifier recomputes from `ids` | Final/LinkHash | `test_ivc_rejects_wrong_claims` | ✅ (N15 closed for v2; G3: `ids` still an input) |
+| Folded incoming predicate `k_prev` < K and consistent with ι / e_k / transcript | prover | one-hot in Gadget and CF | Gadget | `test_ivc_rejects_wrong_incoming_predicate` | ✅ |
+| Running ACCS satisfied (openings, claims) | — | `hfs::decide` + kn-ccs oracle in tests | Final/Decider | `test_ivc_rejects_tampered_accumulators`; oracle on every verified step of every chain test | ✅ needs W (G2) |
+| CycleFold accumulator satisfied | — | `is_sat_relaxed` | Final/CycleFold | `test_ivc_rejects_tampered_accumulators`, `test_ivc_rejects_bad_cyclefold_witness` | ✅ needs W (G2) |
+| Last incoming instance satisfies predicate ids[n−1] | — | `ccs_is_satisfied` + opening | Final/LastIncoming | `test_ivc_rejects_broken_state_link`, `test_ivc_rejects_wrong_incoming_predicate` | ✅ |
+| Native degree-5 application rows not lowered | shape builder | `KnShapeCS` (D/E rows) | Setup | `test_ivc_native_pow5_application`, `test_ivc_r1cs_template_rejects_pow5_rows` | ✅ |
+| Canonical limb encodings (< p) of E1 points | — | not checked (range-checked only) | — | — | ⚠️ documented limitation (spec §9.7) |
+| Trace recovered from the proof; in-circuit φ | — | — | — | — | ❌ P4 remainder (G3, G4) |

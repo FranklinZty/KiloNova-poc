@@ -188,3 +188,61 @@ Proof (`HfsProof`, bincode legacy in the vectors): `sc_x[s][deg_x+1], sigma[μ][
 ### 8.7 Security parameters (v2)
 
 As §6, with: fold field `E::Scalar`; sponge Poseidon over `E::Scalar`; commitment absorption 4 × 64-bit limbs per coordinate. A rough Schwartz–Zippel count for one fold is ≤ (deg_x·s + 2·s′ + O(q·d)) / 2^128 plus the batching terms. This is not a proof, and the knowledge-soundness argument for the generalised (t, q, d, μ, ν) protocol is not written (PLAN.md §2: tests are not a security proof).
+
+## 9. Recursive layer v1 on HFS v2 with CycleFold (P5, 2026-11-09)
+
+Code: `Nova/src/kilonova/ivc/` (`mod.rs`, `circuit.rs`, `cyclefold.rs`, `gadgets.rs`, `shape.rs`, `breakdown.rs`). Version constant `ivc::IVC_VERSION = 1`. D1 = (a). The v1 recursion (§3, `kilonova::{PublicParams, RecursiveSNARK}`) is unchanged and remains B15-broken; it is historical.
+
+### 9.1 Curves and relations
+
+- **Primary**: one augmented circuit per predicate k over `E1::Scalar` (Pallas scalar field), all K padded to common `(m, num_w, num_io = 1)`, layout `z = (w ‖ 1 ‖ h)`. They form the HFS v2 family (§8) with template R1CS, or **R1CS + native power rows** (§9.6). Commitments on E1 (Pedersen, `kn-hfs-v2-ck`, sized from the padded `num_w`).
+- **CycleFold**: one fixed R1CS over `E2::Scalar = E1::Base`, padded with `R1CSShape::pad`, committed on E2 with key `kn-ivc-cf-ck` of size `max(num_cons, num_vars)` of the padded shape. Folded by Nova's relaxed-R1CS NIFS (§9.4).
+
+### 9.2 CycleFold circuit
+
+Public inputs in this order: `ρ, [k], W_run.(x,y), W_inc.(x,y), W_out.(x,y)`, then for `j < t_idx`: `M_run[j].(x,y), M_out[j].(x,y)`, with `t_idx = t` (Direct; k present) or 0 (Span; no k). 8 + 4t inputs for Direct (20 for R1CS), 7 for Span.
+
+Constraints: ρ = Σ 2^i b_i with 128 boolean b_i (so ρ < 2^128); per input point an infinity bit `inf` with `inf·x = inf·y = 0`, `inf` boolean, and `(1 − inf)(y² − x³ − A x − B) = 0` (`(0, 0)` ⇔ identity, unique because `(0, 0)` is not on Pallas); Direct: one-hot `b_i = [k = i]` with `Σ b_i = 1`, `Σ i·b_i = k`, `ι_k[j] = Σ_i b_i ι_i[j]` (constants); then `W_out = W_run + ρ·W_inc` and `M_out[j] = M_run[j] + ρ·ι_k[j]` with `AllocatedPoint::{scalar_mul, add}` and equality of (x, y, inf).
+
+### 9.3 Primary circuit (predicate k hard-coded)
+
+Advice: `pp_digest, hfs_digest, i, z_0, z_i, trace_i, U_i, u_i = (k_prev, comm_W, io), π_HFS, hint_W, hint_M[t] (Direct), cfU_i, cf_comm_W, cf_T`. E1 points are 4 × 64-bit limbs per coordinate; the flag is `inf = [Σ limbs = 0]` (2 constraints). Limbs of `u_i.comm_W` and of all hints are range-checked; `U_i`'s are bound by the link hash to range-checked outputs of the previous step. `k_prev` is one-hot decomposed over K (range check).
+
+```text
+is_base = [i = 0] ; active = 1 − is_base
+h_in = H_link(pp, hfs, i, z_0, z_i, trace_i, U_i, cfU_i) ; enforce (u_i.io[0] = h_in) OR is_base
+HFS v2 verifier gadget on (U_i, u_i, π) with transcript §8.5 (μ = ν = 1, digest = hfs);
+    every equality multiplied by active
+    -> ρ (128 bits), r_x', r_y', u' = u + ρ, io' = io + ρ·io_u, v' = ε + ρθ, Span: λ' = λ + ρ·e_{k_prev}
+U' = (hint_W, Direct: hint_M | Span: λ', u', io', r_x', r_y', v')
+x_cf = (ρ, [k_prev], U_i.W, u_i.W, hint_W, (U_i.M[j], hint_M[j])_j)   as bignats (no new limbs)
+cfU' = NIFS_cf.fold(cfU_i, (cf_comm_W, x_cf), cf_T)                   (§9.4)
+U_{i+1} = is_base ? U_default : U' ; cfU_{i+1} = is_base ? cfU_default : cfU'
+trace_{i+1} = H(TAG_TRACE, is_base ? 0 : trace_i, k)                   k is a constant
+z_{i+1} = F_k(is_base ? z_0 : z_i)
+output h = H_link(pp, hfs, i + 1, z_0, z_{i+1}, trace_{i+1}, U_{i+1}, cfU_{i+1})
+```
+
+`U_default`: identity commitments (and λ = 0), u = 0, io = 0, r_x = r_y = 0, v = 0; it is satisfied by W = 0, λ = 0. `cfU_default`: identity W and E, u = 0, X = 0.
+
+`H_link` = Poseidon over `E1::Scalar` (`E1::RO2`), `NUM_HASH_BITS` output: `TAG_LINK = 0x4b4e_4956_4301_0001, pp, hfs, i, z_0, z_i, trace, U (the §8.5 running-instance encoding: comm_W 9 elements, comm_M 9 each or λ, u, io, r_x, r_y, v), cfU (W.x, W.y, W.inf, E.x, E.y, E.inf, u, X limbs 4 each)`. `H_trace`: `TAG_TRACE = 0x4b4e_4956_4301_0002, trace, k`, `trace_0 = 0`.
+
+### 9.4 CycleFold fold (n inputs)
+
+`r = H(TAG_CF_FOLD = 0x4b4e_4346_0001_0001, pp_digest, U.W(x,y,inf), U.E(x,y,inf), U.u, U.X limbs, u.W(x,y,inf), u.X limbs, T(x,y,inf))` over `E2::RO` (Poseidon over `E2::Base = E1::Scalar`), 128 bits. `W ← W + r·u.W`, `E ← E + r·T`, `u ← u + r`, `X_i ← X_i + r·x_i mod |E2::Scalar|` (bignat `mult_mod` + `red_mod`). Unlike Nova's 2-input gadget the running U is absorbed, since the fresh CycleFold instance does not hash it. Native twin: `cyclefold::{cf_challenge, cf_fold_prove, cf_fold_verify}` (no blinding, `r_T = 0`).
+
+### 9.5 Verifier and detection layers
+
+`RecursiveSNARK::verify(pp, n, z_0, ids)`: Input (n ≥ 1, |ids| = n, ids < K, |z_0|, last instance's predicate = ids[n−1]); **LinkHash** (`u_n.io[0] = H_link(pp, hfs, n, z_0, z_n, H_trace*(ids), U_n, cfU_n)`); **Decider** (`hfs::decide(U_n, W_n)`); **CycleFold** (`is_sat_relaxed(cfU_n, cfW_n)` incl. openings); **LastIncoming** (comm_W opens to w_n and the CCS of predicate ids[n−1] holds for `(w_n, 1, io)`). Nothing about earlier steps is checked on the host. `IvcError::layer()` names the layer.
+
+### 9.6 Native high-degree rows
+
+Template `R1csPow5`: t = 5, terms `[A,B]·1, [C]·(−1), [D,D,D,D,D]·1, [E]·(−1)`. A constraint annotated `KN_NATIVE_POW5` (`ivc::enforce_pow5`) becomes a row with D = its `a` side and E = its `c` side and A = B = C = 0; every other constraint is an R1CS row with D = E = 0. So `y = x^5` is one degree-5 row, not four multiplications. The recursive verifier itself stays R1CS rows; the gadget runs with deg_x = 6.
+
+### 9.7 Known limitations of this layer
+
+- No compression; `verify` reads the final witnesses (G2, P7).
+- The verifier receives the schedule (G3); there is no in-circuit φ (G4). Claim: "this specific trace".
+- Limb encodings of E1 points are range-checked but not checked to be canonical (< p). A coordinate has at most 4 integer encodings below 2^256; a non-canonical one gives the prover another transcript/challenge for the same point, never a different point (the CycleFold relation and the final canonical link hash pin the value). Closing it costs one comparison per coordinate.
+- `ρ` incomplete-addition edge cases of `scalar_mul` (as in Nova) are not handled separately.
+- No knowledge-soundness proof is written for the composed scheme (PLAN.md §2).

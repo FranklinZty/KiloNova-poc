@@ -8,7 +8,8 @@
 - `Nova/src/kilonova/` is the **normative** implementation (`docs/protocol-spec.md`). `folding/` is a reference oracle only. `NIFS-circuit/` holds the historical cost model behind the old paper figures; never reuse its numbers.
 - **P3 native-field HFS v2** (`Nova/src/kilonova/hfs/`): folds over `E::Scalar` for any CCS template and μ running + ν incoming inputs, Direct and Span, transcript v2 (`transcript.rs::v2`, spec §8; Poseidon over `E::Scalar` with 4×64-bit limb commitments, following D1 = (a)). No recursion. Frozen vectors in `hfs/vectors/` (`KN_UPDATE_VECTORS=1` only with a version bump). See `docs/P3-report.md`.
 - **D1 decided (a): Nova fork + CycleFold** (2026-11-09, `docs/P3.0-decision.md`). Transcript v2 stays v2. P5 builds the CycleFold recursion on `kilonova::hfs`.
-- **B15:** fixed for native folding in v2; **still open in the v1 recursion path** (`nifs.rs`, `span/`, `RecursiveSNARK`), whose multi-step IVC tests stay `#[ignore = "known issue B15 …"]` until P5 moves recursion onto v2. Do not modify v1 to "fix" it.
+- **P5 recursion on v2** (`Nova/src/kilonova/ivc/`): one primary augmented circuit per predicate over `E1::Scalar` verifying HFS v2 in-circuit, one CycleFold circuit over `E2::Scalar` for the E1 group operations (folded with an n-input Nova fold gadget), native `RecursiveSNARK` (`new`, `prove_step`, `verify`), in-circuit Poseidon trace chain, `kn-scenario ivc`. See `docs/P5-report.md`, spec §9. Not done: compression (P7), trace recovery / φ (P4 remainder).
+- **B15:** fixed for native folding (P3) and recursion (P5, v2). The **v1 recursion path** (`nifs.rs`, `span/`, `kilonova::RecursiveSNARK`) is kept unmodified as historical evidence; its multi-step tests stay `#[ignore = "known issue B15 (v1 path only …)"]`. Do not modify v1 to "fix" it.
 - Invariants that must not regress:
   - The in-circuit HFS verifier is **succinct**. It must never take or re-evaluate the other curve's witness; that made setup diverge (44M constraints).
   - The native and gadget transcripts are identical (`transcript.rs` tags). `test_transcript_native_matches_gadget_*` guards this.
@@ -45,6 +46,8 @@ KiloNova-poc/
 │   ├── P3.0-decision.md    # D1 decision memo (decided (a), 2026-11-09)
 │   ├── P3-plan.md          # P3 native-field HFS plan
 │   ├── P3-report.md        # P3 acceptance report
+│   ├── P5-plan.md          # P5 recursion plan
+│   ├── P5-report.md        # P5 acceptance report
 │   └── PLAN.zh.md          # original Chinese PLAN (2026-09-21)
 │
 ├── Nova/                   # Core crate: nova-snark v0.42.0
@@ -136,6 +139,7 @@ KiloNova-poc/
 | `relation.rs` | `PredicateIndex`, `GlobalStructure`, `FoldedWitness`, `FoldedInstance` with lambda coefficients |
 | `nifs.rs` | `NIFS` with two-phase sumcheck (sc_proof_x + sc_proof_y), cross-term computation |
 | `transcript.rs` | HFS transcript v1 domain tags + in-circuit tag helper (shared by native and gadget); `v2` submodule (P3) |
+| `ivc/` | P5 recursion on HFS v2 + CycleFold: `circuit.rs` (primary augmented circuit), `cyclefold.rs`, `gadgets.rs` (HFS gadget, n-input fold, non-native points), `shape.rs` (native power rows), `breakdown.rs`, `fixtures.rs`, `tests.rs` |
 | `hfs/` | P3 native-field HFS v2: `structure.rs` (template, shapes, params, digest), `instance.rs` (Direct/Span), `sumcheck.rs`, `nifs.rs` (prover/verifier, μ/ν inputs), `decider.rs`, `tests.rs`, `vectors/` |
 | `circuit/mod.rs` | `KiloNovaAugmentedCircuit` for recursive verification |
 | `circuit/r1cs.rs` | In-circuit holographic folding verification gadgets |
@@ -186,6 +190,10 @@ cargo test -p kn-ccs --release
 # Native-field HFS v2 (P3) and its kn-run scenario
 cargo test -p nova-snark --release --lib kilonova::hfs -- --test-threads=1
 target/release/kn-run scenario hfs template=r1cs variant=direct steps=100 --seed 101
+
+# P5 recursion (v2 + CycleFold) and its kn-run scenario
+cargo test -p nova-snark --release --lib kilonova::ivc -- --test-threads=1
+target/release/kn-run scenario ivc K=2 steps=16 variant=direct verify_every=4 --seed 101 --experiment p5-ivc
 
 # Run NIFS-circuit benchmarks
 cargo run -p NIFS-circuit
