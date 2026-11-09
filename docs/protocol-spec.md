@@ -113,9 +113,9 @@ The KiloNova PoC **does not provide zero knowledge**. NIFS proofs reveal evaluat
 
 Code: `Nova/src/kilonova/hfs/` (`structure.rs`, `instance.rs`, `sumcheck.rs`, `nifs.rs`, `decider.rs`), tags and the commitment encoding in `transcript.rs::v2`. Test vectors: `Nova/src/kilonova/hfs/vectors/v2_{direct,span}_{r1cs,power5}.txt`, checked by `hfs::tests::test_vectors_v2_*`. Changing anything in this section requires a new version (v3) and new vectors.
 
-### 8.1 D1 assumption
+### 8.1 D1 (decided (a), 2026-11-09)
 
-D1 is not formally confirmed. v2 follows option (a) of `docs/P3.0-decision.md` (Nova fork plus CycleFold): the HFS for instances committed on `E` (E1 = Pallas in the tests) is verified natively in a circuit over `E::Scalar`. Therefore:
+D1 was decided (a) by the maintainer on 2026-11-09. v2 follows option (a) of `docs/P3.0-decision.md` (Nova fork plus CycleFold): the HFS for instances committed on `E` (E1 = Pallas in the tests) is verified natively in a circuit over `E::Scalar`. Therefore:
 
 - the sponge is **Poseidon over `E::Scalar`**, i.e. `E::RO2` (`PoseidonRO<E::Scalar>`, U24 constants, `Strength::Standard`), with circuit twin `E::RO2Circuit`;
 - commitments (points with coordinates in `E::Base`, non-native in that circuit) are absorbed as **`BN_N_LIMBS = 4` limbs of `BN_LIMB_WIDTH = 64` bits per coordinate**, least significant limb first: `x[0..4], y[0..4], is_infinity ∈ {0, 1}` (9 elements). This is the encoding of `Commitment::absorb_in_ro2`; `test_commitment_absorption_matches_ro2` pins the equality.

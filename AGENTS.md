@@ -6,7 +6,8 @@
 - **P1 harness** (`tools/kn-run`, `results/schema.json`): every measurement goes through `kn-run` so records share one format. See `docs/P1-report.md`.
 - **P2 oracle** (`ccs/`, crate `kn-ccs`): native CCS builder and the independent ACCS/CCCS reference checker, ff-generic, with kilonova's conventions pinned by `test_kn_ccs_matches_kilonova_conventions`. Use it as the oracle in P3; do not make it depend on `kilonova/`. See `docs/P2-report.md`.
 - `Nova/src/kilonova/` is the **normative** implementation (`docs/protocol-spec.md`). `folding/` is a reference oracle only. `NIFS-circuit/` holds the historical cost model behind the old paper figures; never reuse its numbers.
-- **P3 native-field HFS v2** (`Nova/src/kilonova/hfs/`): folds over `E::Scalar` for any CCS template and μ running + ν incoming inputs, Direct and Span, transcript v2 (`transcript.rs::v2`, spec §8; Poseidon over `E::Scalar` with 4×64-bit limb commitments, an assumption from D1 option (a) that the maintainer has not confirmed yet). No recursion. Frozen vectors in `hfs/vectors/` (`KN_UPDATE_VECTORS=1` only with a version bump). See `docs/P3-report.md`.
+- **P3 native-field HFS v2** (`Nova/src/kilonova/hfs/`): folds over `E::Scalar` for any CCS template and μ running + ν incoming inputs, Direct and Span, transcript v2 (`transcript.rs::v2`, spec §8; Poseidon over `E::Scalar` with 4×64-bit limb commitments, following D1 = (a)). No recursion. Frozen vectors in `hfs/vectors/` (`KN_UPDATE_VECTORS=1` only with a version bump). See `docs/P3-report.md`.
+- **D1 decided (a): Nova fork + CycleFold** (2026-11-09, `docs/P3.0-decision.md`). Transcript v2 stays v2. P5 builds the CycleFold recursion on `kilonova::hfs`.
 - **B15:** fixed for native folding in v2; **still open in the v1 recursion path** (`nifs.rs`, `span/`, `RecursiveSNARK`), whose multi-step IVC tests stay `#[ignore = "known issue B15 …"]` until P5 moves recursion onto v2. Do not modify v1 to "fix" it.
 - Invariants that must not regress:
   - The in-circuit HFS verifier is **succinct**. It must never take or re-evaluate the other curve's witness; that made setup diverge (44M constraints).
@@ -41,7 +42,7 @@ KiloNova-poc/
 │   ├── P1-report.md        # P1 acceptance report
 │   ├── P2-plan.md          # P2 CCS/ACCS oracle plan
 │   ├── P2-report.md        # P2 acceptance report
-│   ├── P3.0-decision.md    # D1 decision memo (recommends option (a))
+│   ├── P3.0-decision.md    # D1 decision memo (decided (a), 2026-11-09)
 │   ├── P3-plan.md          # P3 native-field HFS plan
 │   ├── P3-report.md        # P3 acceptance report
 │   └── PLAN.zh.md          # original Chinese PLAN (2026-09-21)

@@ -2,7 +2,7 @@
 
 Version: 2026-10-05 (revision 2). Supersedes the 2026-09-21 plan, whose original Chinese text is kept in `docs/PLAN.zh.md`.
 
-Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3.0 decision memo 2026-11-03 (`docs/P3.0-decision.md`; D1 recommendation (a), not yet confirmed). P3 executed 2026-11-08 for native folding (`docs/P3-report.md`); the recursion-side item (flipping `test_known_issue_b15_*`) moves to P5. P4–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
+Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3.0 decision memo 2026-11-03 (`docs/P3.0-decision.md`); **D1 decided (a), Nova fork + CycleFold, 2026-11-09**. P3 executed 2026-11-08 for native folding (`docs/P3-report.md`); the recursion-side item (flipping `test_known_issue_b15_*`) moves to P5. P4–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
 
 ## 0. What changed in this revision, and why
 
@@ -18,7 +18,7 @@ The 2026-09-21 plan assumed Sonobe as the code base and a protocol that had not 
 
 The consequences for feasibility:
 
-1. **Base: stay on the Nova fork for now, but decide at the P3 gate (decision D1).** Fixing B15 means building CycleFold-style infrastructure here, or porting the HFS onto a library that already has CycleFold, CCS and HyperNova (Sonobe). A time-boxed 2-day spike for each option decides it (P3.0). The plan is written so that either choice keeps the P3–P10 acceptance criteria.
+1. **Base: stay on the Nova fork (decision D1 = (a), Nova fork + CycleFold, decided 2026-11-09).** Fixing B15 means building CycleFold-style infrastructure here, or porting the HFS onto a library that already has CycleFold, CCS and HyperNova (Sonobe). A time-boxed 2-day spike for each option decides it (P3.0). The plan is written so that either choice keeps the P3–P10 acceptance criteria.
 2. **The critical path is P3 → P5 → P7**, not P1. P1 shrinks to a minimal harness. The full bench-runner moves to just before P8/P9.
 3. **High-degree CCS (deliverable 3) is a protocol generalisation, not a builder task.** The HFS code hard-codes t=3, d=2 and μ=ν=1. The `folding/` crate is generic over CCS and can serve as a slow reference oracle once its known defects (B11, B12, B14) are fixed.
 4. **The 16 GB development laptop is not an experiment machine.** Formal runs (P9) need a fixed Linux host with ≥64 GB RAM.
@@ -124,7 +124,7 @@ Delivered: `Nova/src/kilonova/hfs/` (native-field HFS v2: any CCS template, μ r
 
 Goal: a complete HFS without recursion, run over the native field of the folded relation, that lets different matrix indices enter the fold.
 
-- **P3.0 decision spike (2 days, hard time box).** Resolve B15 on paper and in a prototype:
+- **P3.0 decision spike (2 days, hard time box; done 2026-11-03, D1 decided (a) on 2026-11-09).** Resolve B15 on paper and in a prototype:
   - (a) *Nova fork + CycleFold*: run the HFS for E₁-instances over E₁::Scalar inside the E₁ circuit (native sum-check). Delegate the ≤4 group scalar multiplications per fold (comm_W and the three comm_M) to a small E₂ "CycleFold" circuit, folded with plain Nova NIFS.
   - (b) *Port to Sonobe*: put the HFS on Sonobe's CCS/HyperNova/CycleFold stack at a pinned commit. First run its CCS, HyperNova, ProtoGalaxy and CycleFold tests.
   - Output: a one-page decision memo with measured smoke results, the expected constraint count per step, and the porting cost. The rest of the plan is unchanged by the choice. Only file paths and P8's "same-library" set differ.
@@ -281,7 +281,7 @@ Acceptance:
 | P0 | done | — | |
 | P1 | done | no | |
 | P2 | done | yes | |
-| P3 (incl. P3.0) | 10–16 | yes | D1 decided here |
+| P3 (incl. P3.0) | 10–16 | yes | D1 decided: (a), 2026-11-09 |
 | P4 | 5–8 | yes | |
 | P5 | 10–15 | yes | |
 | P6 | 7–12 | partly | a=4/8 is stretch |
@@ -503,7 +503,8 @@ Current status (2026-11-08):
 | P0 | **Done**, with open blocker B15 | `docs/baseline-status.md`; `cargo test -p nova-snark --release --lib kilonova -- --test-threads=1` → 25 passed, 5 ignored (B15 and the perf harness) |
 | P1 | **Done** (OOM check pending a Linux run) | `docs/P1-report.md`; `target/release/kn-run selfcheck` → 16 checks, 0 failed; kilonova suite → 28 passed, 5 ignored |
 | P2 | **Done** | `docs/P2-report.md`; `cargo test -p kn-ccs --release` → 20 passed; kilonova suite → 29 passed, 5 ignored; `results/raw/p2-ccs.jsonl` |
-| P3 | **Done for native folding** (no recursion; D1 option (a) assumed in transcript v2, not yet confirmed; no independent review yet) | `docs/P3-report.md`; kilonova suite → 53 passed, 5 ignored (4 × B15 in the v1 recursion path, 1 perf harness); `kilonova::hfs` → 20 passed; `cargo test -p kn-ccs --release` → 21 passed; `results/raw/p3-hfs.jsonl` (28 records). B15 fixed for native folding, still open for recursion (P5). |
+| P3.0 / D1 | **Decided (a): Nova fork + CycleFold** (maintainer, 2026-11-09) | `docs/P3.0-decision.md` |
+| P3 | **Done for native folding** (no recursion; transcript v2 follows D1 = (a), confirmed 2026-11-09; no independent review yet) | `docs/P3-report.md`; kilonova suite → 53 passed, 5 ignored (4 × B15 in the v1 recursion path, 1 perf harness); `kilonova::hfs` → 20 passed; `cargo test -p kn-ccs --release` → 21 passed; `results/raw/p3-hfs.jsonl` (28 records). B15 fixed for native folding, still open for recursion (P5). |
 | P4–P10 | Not started | — |
 
 A status changes only on the commands, results and versions in an acceptance report. Creating or revising this plan does not mean prototype code, tests or experiments have been executed beyond what the P0 reports show.

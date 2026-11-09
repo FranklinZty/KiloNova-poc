@@ -17,13 +17,13 @@ fold_field       = "E::Base"  # v1 (recursion path) only: KNOWN ISSUE B15, fixed
 
 [protocol_v2]                 # P3 native-field HFS (Nova/src/kilonova/hfs, docs/protocol-spec.md section 8)
 version          = 2          # transcript.rs::v2::HFS_TRANSCRIPT_VERSION
-fold_field       = "E::Scalar"
+fold_field       = "E::Scalar"   # D1 = (a) Nova fork + CycleFold (decided 2026-11-09): HFS in-circuit over E1::Scalar, E1 group ops in a CycleFold circuit over E2::Scalar
 template         = "any (t, q, d): kn_ccs::Template / hfs::CcsTemplate"
 mu_nu            = "mu running + nu incoming, mu + nu >= 1"
 deg_x            = "max(d + 1, 2)"
 deg_y            = 2
 sumcheck_order   = "round i binds bit i (least significant first), no reversal"
-sponge           = "Poseidon over E::Scalar (E::RO2)"            # D1 option (a) assumption
+sponge           = "Poseidon over E::Scalar (E::RO2)"            # D1 = (a), decided 2026-11-09
 commitment_absorb = "x limbs, y limbs (4 x 64 bits, LSB first), is_infinity"
 tags             = ["0x4b4e484653020001", "0x4b4e484653020002", "0x4b4e484653020003", "0x4b4e484653020004"]
 

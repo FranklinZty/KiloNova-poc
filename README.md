@@ -25,7 +25,7 @@ Status as of 2026-11-08 (P3). Details are in `PLAN.md`, `docs/baseline-status.md
 
 1. Succinct in-circuit HFS verifier; setup converges (2 iterations for K=3). ✅
 2. Index-span folding (Span variant). ✅
-3. Multi-step non-uniform IVC. ⛔ Blocked by B15 in the v1 recursion path; the 1-step bootstrap verifies. P5 moves recursion onto HFS v2 (D1 option (a), CycleFold, pending confirmation).
+3. Multi-step non-uniform IVC. ⛔ Blocked by B15 in the v1 recursion path; the 1-step bootstrap verifies. P5 moves recursion onto HFS v2 (D1 = (a), CycleFold, decided 2026-11-09).
 4. Compressed SNARK / independent final verifier. ⏳ (P7)
 5. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; native folding over CCS (HFS v2, P3) ✅; recursion over CCS ⏳ (P5)
 
