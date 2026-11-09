@@ -740,6 +740,237 @@ mod hfs {
   }
 }
 
+fn scenario_ivc(out: &mut Output, args: &Args) -> Result<(), String> {
+  use nova_snark::kilonova::{
+    hfs::{Direct, Span},
+    ivc::PrimaryTemplate,
+  };
+  let tpl = match arg(args, "template", Some("r1cs".to_string()))?.as_str() {
+    "r1cs" => PrimaryTemplate::R1cs,
+    "pow5" => PrimaryTemplate::R1csPow5,
+    t => return Err(format!("unknown template {t} (r1cs | pow5)")),
+  };
+  let k: usize = arg(args, "K", Some(2))?;
+  let steps: usize = arg(args, "steps", Some(16))?;
+  let every: usize = arg(args, "verify_every", Some(0))?;
+  let seed: u64 = arg(args, "seed", None)?;
+  if !(1..=4).contains(&k) || steps == 0 {
+    return Err("need 1 <= K <= 4 and steps >= 1".into());
+  }
+  match arg(args, "variant", Some("direct".to_string()))?.as_str() {
+    "direct" => ivc::run::<Direct>(out, tpl, k, steps, every, seed),
+    "span" => ivc::run::<Span>(out, tpl, k, steps, every, seed),
+    v => Err(format!("unknown variant {v}")),
+  }
+}
+
+/// P5: the non-uniform recursive chain on HFS v2 + CycleFold (`kilonova::ivc`).
+mod ivc {
+  use super::*;
+  use nova_snark::kilonova::{
+    ivc::{
+      breakdown::primary_breakdown, fixtures::ChainPredicates, primary_constraint_counts,
+      IvcVariant, PrimaryTemplate, PublicParams, RecursiveSNARK,
+    },
+    predicate_constraint_counts,
+  };
+
+  fn bytes<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, String> {
+    bincode::serde::encode_to_vec(v, bincode::config::legacy()).map_err(|e| e.to_string())
+  }
+
+  pub fn run<V: IvcVariant<E1>>(
+    out: &mut Output,
+    tpl: PrimaryTemplate,
+    k: usize,
+    steps: usize,
+    every: usize,
+    seed: u64,
+  ) -> Result<(), String> {
+    let preds = ChainPredicates::<F1>::new(k, tpl == PrimaryTemplate::R1csPow5);
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let z0 = vec![F1::from(rng.next_u64()), F1::from(rng.next_u64())];
+    // every member once, then a seeded schedule
+    let ids: Vec<usize> = (0..steps)
+      .map(|i| {
+        if i < k {
+          i
+        } else {
+          (rng.next_u32() as usize) % k
+        }
+      })
+      .collect();
+
+    out.f("scheme", format!("kilonova-ivc-v2-{}", V::NAME));
+    out.f(
+      "workload",
+      format!(
+        "chain-predicates-k{k}-{}",
+        if tpl == PrimaryTemplate::R1csPow5 {
+          "pow5"
+        } else {
+          "r1cs"
+        }
+      ),
+    );
+    out.f("protocol_version", 2);
+    out.f("transcript_version", 2);
+    out.f(
+      "security_profile",
+      format!(
+        "pallas/vesta; HFS v2 in-circuit over E1::Scalar + CycleFold over E2::Scalar (D1 = (a)); pedersen; poseidon; challenge {NUM_CHALLENGE_BITS} bits; hash {NUM_HASH_BITS} bits; non-ZK; uncompressed (verify reads the final witnesses, G2)"
+      ),
+    );
+    out.f("K", k);
+    out.f("T", steps);
+    out.f("mu", 1);
+    out.f("nu", 1);
+    out.f(
+      "input_digest",
+      digest_of(
+        "ivc",
+        &[
+          ("variant", V::NAME.into()),
+          ("template", format!("{tpl:?}")),
+          ("K", k.to_string()),
+          ("steps", steps.to_string()),
+          ("seed", seed.to_string()),
+          ("z0", format!("{}{}", fe_hex(&z0[0]), fe_hex(&z0[1]))),
+          ("ids", format!("{ids:?}")),
+        ],
+      ),
+    );
+    out.d("schedule", json!(ids));
+
+    let t = Instant::now();
+    let (pp, report) =
+      PublicParams::<E1, E2, V>::setup(&preds, tpl).map_err(|e| format!("setup: {e}"))?;
+    out.f("setup_ms", ms(t));
+    out.f("setup_iterations", report.iterations.len());
+    out.d("setup_report", serde_json::to_value(&report).unwrap());
+    let hfs = pp.hfs();
+    out.f("d", hfs.template().degree());
+    out.f("t", hfs.t());
+    out.f("q", hfs.template().q());
+    out.f("m_aug", hfs.m());
+    out.f("n_aug", hfs.n());
+    let raw_max = report
+      .primary_raw
+      .iter()
+      .map(|r| r.r1cs_rows + r.pow_rows)
+      .max()
+      .unwrap_or(0);
+    out.f("padding", hfs.m() - raw_max);
+    out.f(
+      "N_total",
+      hfs.shapes().iter().map(|s| s.nnz()).sum::<usize>(),
+    );
+    let mut app = Vec::new();
+    let mut breakdown = Vec::new();
+    for id in 0..k {
+      let a = predicate_constraint_counts(&preds, id).map_err(|e| e.to_string())?;
+      app.push(json!({"id": id, "constraints": a.num_constraints, "aux": a.num_aux}));
+      let b = primary_breakdown(&pp, &preds, id).map_err(|e| e.to_string())?;
+      let c = primary_constraint_counts(&pp, &preds, id).map_err(|e| e.to_string())?;
+      if b.total != c.num_constraints || b.by_category.values().sum::<usize>() != b.total {
+        return Err("breakdown does not sum to the CountingCS total".into());
+      }
+      breakdown.push(serde_json::to_value(&b).unwrap());
+    }
+    out.f(
+      "m_app",
+      app
+        .iter()
+        .map(|a| a["constraints"].as_u64().unwrap())
+        .max()
+        .unwrap(),
+    );
+    out.f(
+      "w_app",
+      app
+        .iter()
+        .map(|a| a["aux"].as_u64().unwrap())
+        .max()
+        .unwrap(),
+    );
+    out.why(
+      "n_app",
+      "the application has no stand-alone shape here; constraints and aux per predicate are in details.application",
+    );
+    out.d("application", json!(app));
+    out.d("constraint_breakdown", json!(breakdown));
+    out.d(
+      "cyclefold",
+      json!({
+        "num_inputs": pp.cyclefold_num_inputs(),
+        "raw_cons_vars_io": report.cyclefold_raw,
+        "padded_cons_vars": report.cyclefold_padded,
+      }),
+    );
+    out.d("pp_digest", fe_hex(&pp.digest()));
+
+    let mut per_step = Vec::with_capacity(steps);
+    let mut spot = Vec::new();
+    let t_all = Instant::now();
+    let t = Instant::now();
+    let mut snark = RecursiveSNARK::<E1, E2, V>::new(&pp, &preds, &z0, ids[0])
+      .map_err(|e| format!("step 1: {e}"))?;
+    per_step.push(ms(t));
+    let mut ok = true;
+    for n in 2..=steps {
+      let t = Instant::now();
+      snark
+        .prove_step(&pp, &preds, ids[n - 1])
+        .map_err(|e| format!("step {n}: {e}"))?;
+      per_step.push(ms(t));
+      if every > 0 && n % every == 0 && n < steps {
+        let t = Instant::now();
+        let r = snark.verify(&pp, n, &z0, &ids[..n]);
+        spot.push(json!({"step": n, "ok": r.is_ok(), "verify_ms": ms(t)}));
+        ok &= r.is_ok();
+      }
+    }
+    out.f("recursive_ms", ms(t_all));
+    let t = Instant::now();
+    let res = snark.verify(&pp, steps, &z0, &ids);
+    out.f("verify_warm_ms", ms(t));
+    let expected = preds.run(&z0, &ids);
+    let final_ok = matches!(&res, Ok(z) if *z == expected);
+    ok &= final_ok;
+    out.f("verification_ok", ok);
+    out.f("checkpoint_bytes", bytes(&snark)?.len());
+    out.why(
+      "witness_ms",
+      "witness generation is part of each prove_step (circuit synthesis); see details.per_step_prove_ms",
+    );
+    out.why(
+      "public_state_bytes",
+      "no compressed public statement before P7; checkpoint_bytes is the uncompressed RecursiveSNARK",
+    );
+    out.d("per_step_prove_ms", json!(per_step));
+    out.d("spot_verify", json!(spot));
+    let mut sorted = per_step[1..].to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    if !sorted.is_empty() {
+      out.d("prove_step_ms_median", sorted[sorted.len() / 2]);
+    }
+    out.d(
+      "timing_note",
+      "in-process Instant timers; development machine, orientation only, no performance claim",
+    );
+    let mut result = Vec::new();
+    for z in snark.outputs() {
+      result.extend_from_slice(z.to_repr().as_ref());
+    }
+    out.f("result_digest", sha256_hex(&result));
+    match res {
+      Ok(_) if final_ok => Ok(()),
+      Ok(_) => Err("verify returned a wrong z_n".into()),
+      Err(e) => Err(format!("verify: {e} (layer {:?})", e.layer())),
+    }
+  }
+}
+
 fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
   let variant = || -> Result<String, String> { arg(args, "variant", Some("direct".to_string())) };
   let seed = || -> Result<u64, String> { arg(args, "seed", Some(101)) };
@@ -770,6 +1001,7 @@ fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
     }
     "ccs" => scenario_ccs(out, args),
     "hfs" => scenario_hfs(out, args),
+    "ivc" => scenario_ivc(out, args),
     other => Err(format!("unknown scenario '{other}'")),
   }
 }
@@ -778,7 +1010,7 @@ fn main() {
   let argv: Vec<String> = std::env::args().skip(1).collect();
   let Some(name) = argv.first().cloned() else {
     eprintln!(
-      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs> [key=value ...]"
+      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs|ivc> [key=value ...]"
     );
     std::process::exit(2);
   };
