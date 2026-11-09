@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 mod circuit;
 pub mod hfs;
+pub mod ivc;
 pub mod nifs;
 pub mod relation;
 pub mod span;
@@ -444,7 +445,7 @@ fn add_shape_constraint<S: PrimeField>(
   **nn += 1;
 }
 
-fn shape_cs_to_shape<E: Engine>(cs: &ShapeCS<E>) -> R1CSShape<E> {
+pub(crate) fn shape_cs_to_shape<E: Engine>(cs: &ShapeCS<E>) -> R1CSShape<E> {
   let mut A = SparseMatrix::<E::Scalar>::empty();
   let mut B = SparseMatrix::<E::Scalar>::empty();
   let mut C = SparseMatrix::<E::Scalar>::empty();
@@ -1255,13 +1256,13 @@ mod tests {
   }
 
   #[test]
-  #[ignore = "known issue B15: v1 HFS over E::Base cannot fold E::Scalar R1CS (native folding fixed in v2, kilonova::hfs; recursion pending P5); see docs/baseline-status.md"]
+  #[ignore = "known issue B15 (v1 path only, kept as historical evidence): v1 HFS over E::Base cannot fold E::Scalar R1CS. Fixed by the v2 recursion (P5): the same trace passes in kilonova::ivc::tests::test_ivc_v2_nonuniform_*; see docs/baseline-status.md"]
   fn test_ivc_nontrivial_nonuniform_smoke() {
     run_nonuniform_trace_test(&[0usize, 2usize]);
   }
 
   #[test]
-  #[ignore = "known issue B15: v1 HFS over E::Base cannot fold E::Scalar R1CS (native folding fixed in v2, kilonova::hfs; recursion pending P5); see docs/baseline-status.md"]
+  #[ignore = "known issue B15 (v1 path only, kept as historical evidence): v1 HFS over E::Base cannot fold E::Scalar R1CS. Fixed by the v2 recursion (P5): the same trace passes in kilonova::ivc::tests::test_ivc_v2_nonuniform_*; see docs/baseline-status.md"]
   fn test_ivc_nontrivial_nonuniform() {
     run_nonuniform_trace_test(&[0usize, 1usize, 2usize]);
   }

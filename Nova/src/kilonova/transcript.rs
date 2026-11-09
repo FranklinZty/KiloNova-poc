@@ -49,8 +49,7 @@ pub(crate) fn absorb_domain_tag<E: Engine, CS: ConstraintSystem<E::Base>>(
 /// HFS transcript **v2** (P3, native-field HFS in `kilonova::hfs`). The absorption order is
 /// frozen in `docs/protocol-spec.md` §8.
 ///
-/// D1 assumption (option (a) of `docs/P3.0-decision.md`, not yet confirmed by the maintainer):
-/// the HFS for instances committed on `E` is verified natively in a circuit over `E::Scalar`.
+/// D1 = option (a) of `docs/P3.0-decision.md` (decided 2026-11-09): the HFS for instances committed on `E` is verified natively in a circuit over `E::Scalar`.
 /// The sponge is therefore Poseidon over `E::Scalar` (`E::RO2`, circuit twin `E::RO2Circuit`).
 /// Commitments on `E` have coordinates in `E::Base`, which is non-native there, so each
 /// coordinate is absorbed as `BN_N_LIMBS` limbs of `BN_LIMB_WIDTH` bits, least significant limb
