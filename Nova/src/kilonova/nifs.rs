@@ -910,11 +910,12 @@ mod tests {
   /// satisfied over `E::Scalar` but uses a negative coefficient (here `(w0 - w1) * 1 = 0`) and
   /// a wrapping product (`w0 * w0 = x0`) cannot be folded.
   ///
-  /// Status (P3, 2026-11-08): **fixed for native folding in transcript v2**
-  /// (`kilonova::hfs`): `hfs::tests::test_b15_instance_class_folds_in_v2` folds this exact
-  /// shape over `E::Scalar`. The v1 path asserted here is still the one used by
-  /// `RecursiveSNARK`, so recursion stays affected until P5 moves it onto v2. Delete or flip
-  /// this test only together with that switch.
+  /// Status: **fixed** for native folding in P3 (`hfs::tests::test_b15_instance_class_folds_in_v2`
+  /// folds this exact shape over `E::Scalar`) and for recursion in P5 (`kilonova::ivc`, HFS v2
+  /// with CycleFold; `ivc::tests::test_ivc_v2_nonuniform_*` run the v1 traces that are ignored
+  /// here). This test is deliberately **not** flipped: it pins the behaviour of the frozen v1
+  /// code (`nifs.rs`, `RecursiveSNARK` v1), which is kept unmodified as historical evidence.
+  /// Delete it together with the v1 path.
   #[test]
   fn test_known_issue_b15_scalar_r1cs_not_foldable_over_base() {
     type E = PallasEngine;
