@@ -27,6 +27,15 @@ sponge           = "Poseidon over E::Scalar (E::RO2)"            # D1 = (a), dec
 commitment_absorb = "x limbs, y limbs (4 x 64 bits, LSB first), is_infinity"
 tags             = ["0x4b4e484653020001", "0x4b4e484653020002", "0x4b4e484653020003", "0x4b4e484653020004"]
 
+[recursion_v2]                # P5, Nova/src/kilonova/ivc, docs/protocol-spec.md section 9
+version          = 1          # ivc::IVC_VERSION
+d1               = "(a) Nova fork + CycleFold"
+primary          = "one augmented circuit per predicate over E1::Scalar (Pallas), padded to common (m, num_w), num_io = 1"
+cyclefold        = "R1CS over E2::Scalar = E1::Base, inputs rho,[k],W_run,W_inc,W_out,(M_run[j],M_out[j]); 8 + 4t (Direct) or 7 (Span)"
+cyclefold_fold   = "Nova relaxed-R1CS NIFS, n inputs, running instance absorbed, tag 0x4b4e434600010001"
+tags             = ["0x4b4e495643010001 (link)", "0x4b4e495643010002 (trace)"]
+templates        = ["R1CS (t=3, d=2)", "R1CS + native power rows (t=5, d=5)"]
+
 [setup]
 max_iterations   = 12         # kilonova::MAX_SETUP_ITERATIONS
 max_constraints  = 1048576    # kilonova::MAX_SETUP_CONSTRAINTS (2^20)

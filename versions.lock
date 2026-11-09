@@ -11,6 +11,8 @@ p0_commit           = "72f9596336a15aad7d54c8f5a3dc4e2fe59d74fe"
 p1_commit           = "c9674cdac4565a01883f1aa2349e801e1717ed85"
 p2_commit           = "0b440239f5a82aebc48587fbcc843ce2adcd60f5"
 p3_branch           = "p3-native-hfs"                # P3 commits are listed in docs/P3-report.md; no new dependencies, root Cargo.lock unchanged
+p5_branch           = "p5-recursion"                 # P5 (from 4e8665b): kilonova::ivc (HFS v2 + CycleFold), recursive layer IVC_VERSION = 1 (spec §9); commits in docs/P5-report.md; no new dependencies, root Cargo.lock unchanged
+ivc_version         = 1                             # Nova/src/kilonova/ivc/mod.rs IVC_VERSION (link hash, trace chain, CycleFold layout)
 
 [toolchain]
 pinned              = "1.92.0"                      # rust-toolchain.toml; measured in docs/P0-plan.md
