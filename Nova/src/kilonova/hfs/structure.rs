@@ -235,6 +235,28 @@ impl<E: Engine> HfsParams<E> {
     template: CcsTemplate<E::Scalar>,
     shapes: Vec<CcsShape<E::Scalar>>,
   ) -> Result<Self, HfsError> {
+    Self::build(template, shapes, None)
+  }
+
+  /// Builds the parameters of an authenticated [`PredicateFamily`](crate::kilonova::family::PredicateFamily)
+  /// (P4). Identical to [`Self::new`] except that the digest absorbed by every HFS v2 transcript
+  /// is the **family digest** (which covers the stable ids, the canonical matrix encodings, the
+  /// selector descriptor and the key labels and sizes).
+  pub fn from_family(
+    family: &crate::kilonova::family::PredicateFamily<E::Scalar>,
+  ) -> Result<Self, HfsError> {
+    Self::build(
+      family.template().clone(),
+      family.shapes().to_vec(),
+      Some(family.digest()),
+    )
+  }
+
+  pub(crate) fn build(
+    template: CcsTemplate<E::Scalar>,
+    shapes: Vec<CcsShape<E::Scalar>>,
+    family_digest: Option<E::Scalar>,
+  ) -> Result<Self, HfsError> {
     // Re-validate: the fields are private, but a deserialised template is not trusted.
     let template = CcsTemplate::new(
       template.t,
@@ -267,17 +289,20 @@ impl<E: Engine> HfsParams<E> {
     let ck_index_len = t * k;
     let ck = E::CE::setup(CK_LABEL, ck_len);
     let ck_index = E::CE::setup(CK_INDEX_LABEL, ck_index_len);
-    let digest = DigestComputer::<E::Scalar, _>::new(&DigestView::<E> {
-      version: HFS_TRANSCRIPT_VERSION,
-      template: &template,
-      shapes: &shapes,
-      ck_label: CK_LABEL,
-      ck_len,
-      ck_index_label: CK_INDEX_LABEL,
-      ck_index_len,
-    })
-    .digest()
-    .map_err(|e| HfsError::InvalidFamily(format!("digest: {e}")))?;
+    let digest = match family_digest {
+      Some(d) => d,
+      None => DigestComputer::<E::Scalar, _>::new(&DigestView::<E> {
+        version: HFS_TRANSCRIPT_VERSION,
+        template: &template,
+        shapes: &shapes,
+        ck_label: CK_LABEL,
+        ck_len,
+        ck_index_label: CK_INDEX_LABEL,
+        ck_index_len,
+      })
+      .digest()
+      .map_err(|e| HfsError::InvalidFamily(format!("digest: {e}")))?,
+    };
     let mut pp = Self {
       template,
       shapes,

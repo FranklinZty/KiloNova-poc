@@ -24,6 +24,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 mod circuit;
+pub mod family;
 pub mod hfs;
 pub mod ivc;
 pub mod nifs;

@@ -34,6 +34,7 @@ pub use decider::decide;
 pub use instance::{Direct, IncomingInstance, RunningInstance, RunningWitness, Span, Variant};
 pub use nifs::{Challenges, HfsProof, ProverOutput, NIFS};
 pub use structure::{num_vars, CcsShape, CcsTemplate, HfsParams};
+pub(crate) use structure::{CK_INDEX_LABEL, CK_LABEL};
 
 /// Sum-check phase of the HFS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
