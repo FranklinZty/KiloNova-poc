@@ -1192,8 +1192,14 @@ mod family {
       let inc = IncomingInstance::new(&pp, id, &w, io.clone()).map_err(|e| e.to_string())?;
       let (ru, rw): (Vec<_>, Vec<_>) = acc.iter().cloned().unzip();
       let t = Instant::now();
-      let po = NIFS::<E1, V>::prove(&pp, &ru, &rw, std::slice::from_ref(&inc), &[w.clone()])
-        .map_err(|e| e.to_string())?;
+      let po = NIFS::<E1, V>::prove(
+        &pp,
+        &ru,
+        &rw,
+        std::slice::from_ref(&inc),
+        std::slice::from_ref(&w),
+      )
+      .map_err(|e| e.to_string())?;
       prove_ms.push(ms(t));
       let (u, ch) = NIFS::<E1, V>::verify(&pp, &ru, std::slice::from_ref(&inc), &po.proof)
         .map_err(|e| e.to_string())?;

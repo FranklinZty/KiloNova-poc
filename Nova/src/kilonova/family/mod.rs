@@ -351,8 +351,8 @@ fn eq_table<F: PrimeField>(p: &[F]) -> Vec<F> {
   let mut t = vec![F::ONE; 1 << p.len()];
   for (i, r) in p.iter().enumerate() {
     let stride = 1 << i;
-    for b in 0..(1usize << p.len()) {
-      t[b] *= if b & stride != 0 { *r } else { F::ONE - r };
+    for (b, v) in t.iter_mut().enumerate() {
+      *v *= if b & stride != 0 { *r } else { F::ONE - r };
     }
   }
   t

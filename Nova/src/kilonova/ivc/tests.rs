@@ -867,7 +867,7 @@ fn test_phi_scheduled_program() {
   let prog = example_program::<F>();
   assert_eq!(prog.select(0, &[F::ZERO, F::from(3)]), None);
   assert_eq!(prog.encode::<F>(&[3]), None);
-  assert_eq!(prog.encode::<F>(&vec![0; prog.capacity() + 1]), None);
+  assert_eq!(prog.encode::<F>(&[0; 300][..prog.capacity() + 1]), None);
 }
 
 /// At least two predicates really change the wiring: the application circuits of members 0–3
