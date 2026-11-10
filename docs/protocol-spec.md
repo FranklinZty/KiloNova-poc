@@ -283,3 +283,14 @@ Code: `Nova/src/kilonova/family/`. Tests: `family::tests` and the P4 tests in `i
 ### 10.3 K-dependent density cost
 
 λ becomes dense after K distinct members have been folded, so any representation of the folded index pays for the union of the members' supports: the explicit matrix has `U = Σ_j |∪_k supp(M_{k,j})|` non-zeros, between `max_k nnz(M_k)` (identical supports) and `Σ_k nnz(M_k)` (disjoint supports). The weighted path keeps only λ but evaluates all K base matrices (`Σ_k nnz(M_k)` work) at the decider. Measured (`results/raw/p4-family.jsonl`, `docs/P4-report.md` §3): see the report; summary in §10.4.
+
+### 10.4 Measured density cost (P4, development laptop, `docs/P4-report.md` §3.4)
+
+| Family | union / one member at K = 2, 4, 8, 16, 32 |
+|---|---|
+| synthetic, shared supports (m = 1024) | 1.00 at every K |
+| synthetic, half the rows shared | 1.42, 2.30, 4.03, 7.40, 14.25 |
+| synthetic, low overlap | 1.89, 3.65, 7.15, 14.03, 27.38 |
+| recursive family (K primary circuits, 2.76 M non-zeros each) | 1.085, 1.085, 1.085, 1.170 (K ≤ 16) |
+
+In every run the explicit support reached the union exactly when the K-th distinct member was folded. For the recursive family the weighted path's evaluation time and base storage grow linearly in K (0.23 s → 1.54 s, 133 MB → 2.12 GB from K = 1 to 16) while the explicit matrix stays at 133–155 MB; the decider currently uses the weighted path.
