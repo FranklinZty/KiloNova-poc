@@ -754,8 +754,8 @@ fn scenario_ivc(out: &mut Output, args: &Args) -> Result<(), String> {
   let steps: usize = arg(args, "steps", Some(16))?;
   let every: usize = arg(args, "verify_every", Some(0))?;
   let seed: u64 = arg(args, "seed", None)?;
-  if !(1..=4).contains(&k) || steps == 0 {
-    return Err("need 1 <= K <= 4 and steps >= 1".into());
+  if !(1..=16).contains(&k) || steps == 0 {
+    return Err("need 1 <= K <= 16 and steps >= 1".into());
   }
   match arg(args, "variant", Some("direct".to_string()))?.as_str() {
     "direct" => ivc::run::<Direct>(out, tpl, k, steps, every, seed),
@@ -770,7 +770,7 @@ mod ivc {
   use nova_snark::kilonova::{
     ivc::{
       breakdown::primary_breakdown, fixtures::ChainPredicates, primary_constraint_counts,
-      IvcVariant, PrimaryTemplate, PublicParams, RecursiveSNARK,
+      IvcVariant, PrimaryTemplate, PublicParams, RecursiveSNARK, IVC_VERSION,
     },
     predicate_constraint_counts,
   };
@@ -787,9 +787,9 @@ mod ivc {
     every: usize,
     seed: u64,
   ) -> Result<(), String> {
-    let preds = ChainPredicates::<F1>::new(k, tpl == PrimaryTemplate::R1csPow5);
+    let preds = ChainPredicates::<F1>::new(k, tpl == PrimaryTemplate::R1csPow5).program();
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
-    let z0 = vec![F1::from(rng.next_u64()), F1::from(rng.next_u64())];
+    let app0 = vec![F1::from(rng.next_u64()), F1::from(rng.next_u64())];
     // every member once, then a seeded schedule
     let ids: Vec<usize> = (0..steps)
       .map(|i| {
@@ -800,6 +800,10 @@ mod ivc {
         }
       })
       .collect();
+    // P4: the schedule is a program in the initial state; φ runs it in-circuit
+    let z0 = preds
+      .z0(&app0, &ids)
+      .ok_or("the schedule does not fit the program register")?;
 
     out.f("scheme", format!("kilonova-ivc-v2-{}", V::NAME));
     out.f(
@@ -818,7 +822,7 @@ mod ivc {
     out.f(
       "security_profile",
       format!(
-        "pallas/vesta; HFS v2 in-circuit over E1::Scalar + CycleFold over E2::Scalar (D1 = (a)); pedersen; poseidon; challenge {NUM_CHALLENGE_BITS} bits; hash {NUM_HASH_BITS} bits; non-ZK; uncompressed (verify reads the final witnesses, G2)"
+        "pallas/vesta; HFS v2 in-circuit over E1::Scalar + CycleFold over E2::Scalar (D1 = (a)); IVC v{IVC_VERSION} (family digest, in-circuit phi, verifier without schedule); pedersen; poseidon; challenge {NUM_CHALLENGE_BITS} bits; hash {NUM_HASH_BITS} bits; non-ZK; uncompressed (verify reads the final witnesses, G2)"
       ),
     );
     out.f("K", k);
@@ -835,7 +839,7 @@ mod ivc {
           ("K", k.to_string()),
           ("steps", steps.to_string()),
           ("seed", seed.to_string()),
-          ("z0", format!("{}{}", fe_hex(&z0[0]), fe_hex(&z0[1]))),
+          ("z0", z0.iter().map(fe_hex).collect::<String>()),
           ("ids", format!("{ids:?}")),
         ],
       ),
@@ -908,34 +912,45 @@ mod ivc {
       }),
     );
     out.d("pp_digest", fe_hex(&pp.digest()));
+    out.d("family_digest", fe_hex(&pp.family().digest()));
+    out.d("family_ids", json!(pp.family().ids()));
 
     let mut per_step = Vec::with_capacity(steps);
     let mut spot = Vec::new();
     let t_all = Instant::now();
     let t = Instant::now();
-    let mut snark = RecursiveSNARK::<E1, E2, V>::new(&pp, &preds, &z0, ids[0])
-      .map_err(|e| format!("step 1: {e}"))?;
+    let mut snark =
+      RecursiveSNARK::<E1, E2, V>::new(&pp, &preds, &z0).map_err(|e| format!("step 1: {e}"))?;
     per_step.push(ms(t));
     let mut ok = true;
     for n in 2..=steps {
       let t = Instant::now();
+      if snark.next_predicate(&preds) != Some(ids[n - 1]) {
+        return Err(format!("step {n}: phi does not follow the program"));
+      }
       snark
-        .prove_step(&pp, &preds, ids[n - 1])
+        .prove_step(&pp, &preds)
         .map_err(|e| format!("step {n}: {e}"))?;
       per_step.push(ms(t));
       if every > 0 && n % every == 0 && n < steps {
         let t = Instant::now();
-        let r = snark.verify(&pp, n, &z0, &ids[..n]);
+        let r = snark.verify_schedule(&pp, n, &z0, &ids[..n]);
         spot.push(json!({"step": n, "ok": r.is_ok(), "verify_ms": ms(t)}));
         ok &= r.is_ok();
       }
     }
     out.f("recursive_ms", ms(t_all));
     let t = Instant::now();
-    let res = snark.verify(&pp, steps, &z0, &ids);
+    // the verifier takes no schedule; the recovered trace is then compared with `ids`
+    let res = snark.verify(&pp, steps, &z0);
     out.f("verify_warm_ms", ms(t));
-    let expected = preds.run(&z0, &ids);
-    let final_ok = matches!(&res, Ok(z) if *z == expected);
+    let expected = preds.inner().run(&app0, &ids);
+    let trace_ok = matches!(&res, Ok(o) if o.trace == pp.trace_of(&ids));
+    let final_ok = trace_ok && matches!(&res, Ok(o) if o.zn[..2] == expected[..]);
+    if let Ok(o) = &res {
+      out.d("recovered_trace", fe_hex(&o.trace));
+      out.d("last_id", o.last_id);
+    }
     ok &= final_ok;
     out.f("verification_ok", ok);
     out.f("checkpoint_bytes", bytes(&snark)?.len());
@@ -971,6 +986,378 @@ mod ivc {
   }
 }
 
+/// P4: index-span support growth and preprocessing/memory overhead versus K.
+///
+/// - `source=synthetic`: K satisfiable R1CS members over one shared assignment (m rows,
+///   `n = m` columns, s non-zeros per row in A and B), with an overlap pattern: `shared` (every
+///   row reuses member 0's positions), `partial` (half of the rows do), `low` (fresh random
+///   positions). T native HFS folds (every member first, then seeded) track the explicit folded
+///   matrix step by step and cross-check explicit = weighted = protocol claims.
+/// - `source=ivc`: the real recursive family (the K primary augmented circuits of the chain
+///   program, Direct, R1CS); setup, then the support statistics, the family-digest time and
+///   the explicit-vs-weighted evaluation at a random point with a dense λ.
+mod family {
+  use super::*;
+  use nova_snark::kilonova::{
+    family::{support_stats, weighted_eval, FoldedMatrices, PredicateFamily},
+    hfs::{
+      decide, CcsShape, CcsTemplate, Direct, HfsParams, IncomingInstance, RunningInstance,
+      RunningWitness, Span, Variant, NIFS,
+    },
+    ivc::{fixtures::ChainPredicates, PredicateProgram, PrimaryTemplate, PublicParams},
+    PredicateSet,
+  };
+
+  type Entries = Vec<(usize, usize, F1)>;
+
+  /// One member satisfied by `z` (u = 1 at column `u_col`): rows `(A z)(B z) = C z`, A and B
+  /// with `s` entries per row, C with `s − 1` random entries plus the u-column entry that makes
+  /// the row hold. With probability `p` a row reuses the positions of `base`.
+  fn member(
+    z: &[F1],
+    m: usize,
+    u_col: usize,
+    s: usize,
+    base: Option<&[Vec<Vec<usize>>; 3]>,
+    p: f64,
+    rng: &mut ChaCha20Rng,
+  ) -> ([Entries; 3], [Vec<Vec<usize>>; 3]) {
+    let n = z.len();
+    let mut mats: [Entries; 3] = Default::default();
+    let mut cols: [Vec<Vec<usize>>; 3] = Default::default();
+    for row in 0..m {
+      let reuse = base.is_some() && (rng.next_u64() as f64 / u64::MAX as f64) < p;
+      let mut vals = [F1::ZERO; 3];
+      for j in 0..3 {
+        let want = if j == 2 { s.saturating_sub(1) } else { s };
+        let cs: Vec<usize> = match (reuse, base) {
+          (true, Some(b)) => b[j][row].clone(),
+          _ => {
+            let mut v: Vec<usize> = (0..want).map(|_| (rng.next_u64() as usize) % n).collect();
+            v.retain(|&c| c != u_col || j != 2);
+            v
+          }
+        };
+        for &c in &cs {
+          let x = F1::random(&mut *rng);
+          vals[j] += x * z[c];
+          mats[j].push((row, c, x));
+        }
+        cols[j].push(cs);
+      }
+      // C's u entry: c_u · 1 = A·B − partial C
+      mats[2].push((row, u_col, vals[0] * vals[1] - vals[2]));
+    }
+    (mats, cols)
+  }
+
+  fn shape(mats: [Entries; 3], m: usize, num_w: usize) -> Result<CcsShape<F1>, String> {
+    CcsShape::new(m, num_w, 1, mats.to_vec()).map_err(|e| e.to_string())
+  }
+
+  pub fn run(out: &mut Output, args: &Args) -> Result<(), String> {
+    let k: usize = arg(args, "K", Some(4))?;
+    let seed: u64 = arg(args, "seed", None)?;
+    match arg(args, "source", Some("synthetic".to_string()))?.as_str() {
+      "synthetic" => match arg(args, "variant", Some("span".to_string()))?.as_str() {
+        "direct" => synthetic::<Direct>(out, args, k, seed),
+        "span" => synthetic::<Span>(out, args, k, seed),
+        v => Err(format!("unknown variant {v}")),
+      },
+      "ivc" => ivc_family(out, k, seed),
+      s => Err(format!("unknown source {s} (synthetic | ivc)")),
+    }
+  }
+
+  fn stats_json(st: &nova_snark::kilonova::family::SupportStats) -> Value {
+    serde_json::to_value(st).unwrap()
+  }
+
+  fn common(out: &mut Output, k: usize) {
+    out.f("K", k);
+    out.f("protocol_version", 2);
+    out.f("transcript_version", 2);
+    out.f("d", 2);
+    out.f("t", 3);
+    out.f("q", 2);
+    out.why(
+      "checkpoint_bytes",
+      "family/index-span measurement: no RecursiveSNARK checkpoint; byte sizes of the base matrices, the explicit folded matrix and λ are in details.support",
+    );
+  }
+
+  fn synthetic<V: Variant<E1>>(
+    out: &mut Output,
+    args: &Args,
+    k: usize,
+    seed: u64,
+  ) -> Result<(), String> {
+    let m: usize = arg(args, "m", Some(1024))?;
+    let s: usize = arg(args, "s", Some(3))?;
+    let steps: usize = arg(args, "steps", Some(2 * k.max(8)))?;
+    let overlap = arg(args, "overlap", Some("low".to_string()))?;
+    let p = match overlap.as_str() {
+      "shared" => 1.0,
+      "partial" => 0.5,
+      "low" => 0.0,
+      o => return Err(format!("unknown overlap {o} (shared | partial | low)")),
+    };
+    if k == 0 || m < 2 || s == 0 || steps == 0 {
+      return Err("need K >= 1, m >= 2, s >= 1, steps >= 1".into());
+    }
+    common(out, k);
+    out.f("scheme", format!("kilonova-family-synthetic-{}", V::NAME));
+    out.f("workload", format!("w1-r1cs-m{m}-s{s}-{overlap}"));
+    out.f("T", steps);
+    out.f("mu", 1);
+    out.f("nu", 1);
+    out.f("m_app", m);
+    out.f("n_app", m);
+    let num_w = m - 2; // n = num_w + 1 + 1 = m
+    out.f("w_app", num_w);
+    let r = "native folding of a synthetic family: no augmented circuit, no recursion";
+    for f in [
+      "m_aug",
+      "n_aug",
+      "padding",
+      "setup_iterations",
+      "recursive_ms",
+      "verify_warm_ms",
+    ] {
+      out.why(f, r);
+    }
+    out.f(
+      "input_digest",
+      digest_of(
+        "family",
+        &[
+          ("source", "synthetic".into()),
+          ("variant", V::NAME.into()),
+          ("K", k.to_string()),
+          ("m", m.to_string()),
+          ("s", s.to_string()),
+          ("overlap", overlap.clone()),
+          ("steps", steps.to_string()),
+          ("seed", seed.to_string()),
+        ],
+      ),
+    );
+
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let w: Vec<F1> = (0..num_w).map(|_| F1::random(&mut rng)).collect();
+    let io = vec![F1::random(&mut rng)];
+    let z = [w.as_slice(), &[F1::ONE], &io].concat();
+    let t = Instant::now();
+    let mut shapes = Vec::with_capacity(k);
+    let (m0, base) = member(&z, m, num_w, s, None, 0.0, &mut rng);
+    shapes.push(shape(m0, m, num_w)?);
+    for _ in 1..k {
+      let (mk, _) = member(&z, m, num_w, s, Some(&base), p, &mut rng);
+      shapes.push(shape(mk, m, num_w)?);
+    }
+    let gen_ms = ms(t);
+    let support = support_stats(&shapes);
+    out.f("N_total", support.sum_nnz);
+
+    let t = Instant::now();
+    let fam = PredicateFamily::new(
+      format!("w1-{overlap}"),
+      (0..k).map(|i| format!("w1/m{i}")).collect(),
+      1,
+      b"none".to_vec(),
+      CcsTemplate::r1cs(),
+      shapes,
+    )
+    .map_err(|e| e.to_string())?;
+    let digest_ms = ms(t);
+    let t = Instant::now();
+    let pp = HfsParams::<E1>::from_family(&fam).map_err(|e| e.to_string())?;
+    out.f("setup_ms", digest_ms + ms(t));
+
+    let ids: Vec<usize> = (0..steps)
+      .map(|i| {
+        if i < k {
+          i
+        } else {
+          (rng.next_u32() as usize) % k
+        }
+      })
+      .collect();
+    let mut acc: Option<(RunningInstance<E1, V>, RunningWitness<E1>)> = None;
+    let mut explicit = FoldedMatrices::<F1>::zero(3, k);
+    let (mut nnz, mut fold_ms, mut ex_ms, mut wt_ms, mut prove_ms) =
+      (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut ok = true;
+    for &id in &ids {
+      let inc = IncomingInstance::new(&pp, id, &w, io.clone()).map_err(|e| e.to_string())?;
+      let (ru, rw): (Vec<_>, Vec<_>) = acc.iter().cloned().unzip();
+      let t = Instant::now();
+      let po = NIFS::<E1, V>::prove(&pp, &ru, &rw, std::slice::from_ref(&inc), &[w.clone()])
+        .map_err(|e| e.to_string())?;
+      prove_ms.push(ms(t));
+      let (u, ch) = NIFS::<E1, V>::verify(&pp, &ru, std::slice::from_ref(&inc), &po.proof)
+        .map_err(|e| e.to_string())?;
+      let weight = if acc.is_some() { ch.rho } else { F1::ONE };
+      let t = Instant::now();
+      explicit.fold(fam.shapes(), weight, id);
+      fold_ms.push(ms(t));
+      let t = Instant::now();
+      let ex = explicit.eval(&u.r_x, &u.r_y);
+      ex_ms.push(ms(t));
+      let t = Instant::now();
+      let wt = weighted_eval(fam.shapes(), &po.witness.lambda, &u.r_x, &u.r_y);
+      wt_ms.push(ms(t));
+      ok &= u == po.instance
+        && ex == wt
+        && ex[..] == u.v[..3]
+        && explicit.lambda() == po.witness.lambda.as_slice()
+        && decide(&pp, &u, &po.witness).is_ok();
+      nnz.push(explicit.nnz());
+      acc = Some((u, po.witness));
+    }
+    out.f("verification_ok", ok);
+    out.f("witness_ms", 0.0);
+    let dense_step = acc.as_ref().and_then(|_| {
+      nnz
+        .iter()
+        .position(|&x| x == support.union_nnz)
+        .map(|i| i + 1)
+    });
+    out.d("support", stats_json(&support));
+    out.d(
+      "per_step",
+      json!({"ids": ids, "explicit_nnz": nnz, "explicit_fold_ms": fold_ms,
+             "explicit_eval_ms": ex_ms, "weighted_eval_ms": wt_ms, "prove_ms": prove_ms}),
+    );
+    out.d(
+      "summary",
+      json!({"generate_ms": gen_ms, "family_digest_ms": digest_ms,
+             "explicit_reaches_union_at_step": dense_step,
+             "final_explicit_nnz": nnz.last(), "union_nnz": support.union_nnz,
+             "final_explicit_bytes": explicit.bytes(),
+             "explicit_over_member": explicit.nnz() as f64 / support.max_nnz as f64,
+             "family_digest": fe_hex(&fam.digest())}),
+    );
+    out.d(
+      "timing_note",
+      "in-process Instant timers; development machine, no performance claim",
+    );
+    let mut sem = Vec::new();
+    for e in (0..3).flat_map(|j| explicit.matrix(j).to_vec()) {
+      sem.extend_from_slice(e.2.to_repr().as_ref());
+    }
+    out.f("result_digest", sha256_hex(&sem));
+    if ok {
+      Ok(())
+    } else {
+      Err("explicit and weighted paths disagree".into())
+    }
+  }
+
+  fn ivc_family(out: &mut Output, k: usize, seed: u64) -> Result<(), String> {
+    if !(1..=16).contains(&k) {
+      return Err("source=ivc needs 1 <= K <= 16".into());
+    }
+    common(out, k);
+    out.f("scheme", "kilonova-family-ivc-direct");
+    out.f("workload", format!("chain-predicates-k{k}-r1cs-augmented"));
+    out.f(
+      "input_digest",
+      digest_of(
+        "family",
+        &[
+          ("source", "ivc".into()),
+          ("K", k.to_string()),
+          ("seed", seed.to_string()),
+        ],
+      ),
+    );
+    let r = "family measurement after setup: no chain is proven (chains: scenario ivc)";
+    for f in [
+      "T",
+      "mu",
+      "nu",
+      "recursive_ms",
+      "verify_warm_ms",
+      "m_app",
+      "n_app",
+      "w_app",
+    ] {
+      out.why(f, r);
+    }
+    let prog = ChainPredicates::<F1>::new(k, false).program();
+    let t = Instant::now();
+    let (pp, report) = PublicParams::<E1, E2, Direct>::setup(&prog, PrimaryTemplate::R1cs)
+      .map_err(|e| format!("setup: {e}"))?;
+    out.f("setup_ms", ms(t));
+    out.f("setup_iterations", report.iterations.len());
+    let hfs = pp.hfs();
+    out.f("m_aug", hfs.m());
+    out.f("n_aug", hfs.n());
+    let raw_max = report
+      .primary_raw
+      .iter()
+      .map(|r| r.r1cs_rows + r.pow_rows)
+      .max()
+      .unwrap_or(0);
+    out.f("padding", hfs.m() - raw_max);
+    let shapes = hfs.shapes();
+    let t = Instant::now();
+    let support = support_stats(shapes);
+    let support_ms = ms(t);
+    out.f("N_total", support.sum_nnz);
+    // the family digest from scratch (canonical encodings streamed through SHA3)
+    let t = Instant::now();
+    let fam = PredicateFamily::new(
+      prog.family_label(),
+      (0..k).map(|i| prog.member_id(i)).collect(),
+      prog.arity(),
+      prog.selector_descriptor(),
+      hfs.template().clone(),
+      shapes.to_vec(),
+    )
+    .map_err(|e| e.to_string())?;
+    let digest_ms = ms(t);
+    let digest_ok = fam.digest() == pp.family().digest();
+    drop(fam);
+    // a dense λ and a random point: explicit vs weighted evaluation
+    let mut rng = ChaCha20Rng::seed_from_u64(seed);
+    let lambda: Vec<F1> = (0..k).map(|_| F1::random(&mut rng)).collect();
+    let r_x: Vec<F1> = (0..hfs.s()).map(|_| F1::random(&mut rng)).collect();
+    let r_y: Vec<F1> = (0..hfs.s_prime()).map(|_| F1::random(&mut rng)).collect();
+    let t = Instant::now();
+    let explicit = FoldedMatrices::from_lambda(shapes, &lambda);
+    let build_ms = ms(t);
+    let t = Instant::now();
+    let ex = explicit.eval(&r_x, &r_y);
+    let ex_ms = ms(t);
+    let t = Instant::now();
+    let wt = weighted_eval(shapes, &lambda, &r_x, &r_y);
+    let wt_ms = ms(t);
+    let ok = digest_ok && ex == wt && explicit.nnz() == support.union_nnz;
+    out.f("verification_ok", ok);
+    out.d("support", stats_json(&support));
+    out.d(
+      "summary",
+      json!({"support_stats_ms": support_ms, "family_digest_ms": digest_ms,
+             "explicit_build_ms": build_ms, "explicit_eval_ms": ex_ms, "weighted_eval_ms": wt_ms,
+             "explicit_nnz": explicit.nnz(), "explicit_bytes": explicit.bytes(),
+             "family_digest": fe_hex(&pp.family().digest()), "digest_recomputed_equal": digest_ok,
+             "per_member_raw_rows": report.primary_raw.iter().map(|r| r.r1cs_rows).collect::<Vec<_>>()}),
+    );
+    out.d(
+      "timing_note",
+      "in-process Instant timers; development machine, no performance claim",
+    );
+    out.f("result_digest", fe_hex(&pp.family().digest()));
+    if ok {
+      Ok(())
+    } else {
+      Err("family digest or explicit/weighted evaluation mismatch".into())
+    }
+  }
+}
+
 fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
   let variant = || -> Result<String, String> { arg(args, "variant", Some("direct".to_string())) };
   let seed = || -> Result<u64, String> { arg(args, "seed", Some(101)) };
@@ -1002,6 +1389,7 @@ fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
     "ccs" => scenario_ccs(out, args),
     "hfs" => scenario_hfs(out, args),
     "ivc" => scenario_ivc(out, args),
+    "family" => family::run(out, args),
     other => Err(format!("unknown scenario '{other}'")),
   }
 }
@@ -1010,7 +1398,7 @@ fn main() {
   let argv: Vec<String> = std::env::args().skip(1).collect();
   let Some(name) = argv.first().cloned() else {
     eprintln!(
-      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs|ivc> [key=value ...]"
+      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs|ivc|family> [key=value ...]"
     );
     std::process::exit(2);
   };
