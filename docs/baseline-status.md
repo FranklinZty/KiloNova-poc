@@ -30,7 +30,7 @@ The before-P0 sizes come from the P0 setup instrumentation (`CountingCS` dry run
 
 The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` without tables) is kept as a minor memory saving. Converting the buckets to CSR (P0-plan option A, item 2) was **not needed** at these sizes and is deferred.
 
-## 4. Blocker register (B1–B17)
+## 4. Blocker register (B1–B18)
 
 | # | Blocker | Disposition |
 |---|---|---|
@@ -51,7 +51,7 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | **B15** | **HFS over E::Base for R1CS over E::Scalar** (`field_switch` is not a homomorphism) | **Fixed for native folding (P3, HFS v2) and for recursion (P5, `kilonova::ivc`, D1 = (a)).** v2 (`Nova/src/kilonova/hfs/`, spec §8) folds over `E::Scalar` with no projection; the recursive layer (spec §9) verifies it in-circuit over `E1::Scalar` and delegates the E1 group operations to a CycleFold circuit. Multi-step chains verify: `ivc::tests::test_ivc_v2_nonuniform_{smoke,}_{direct,span}` run the 4 traces that are ignored in v1, and the K = 2/4, T = 1/16/64 chains pass (`docs/P5-report.md`). The **v1 path is unchanged and still B15-broken by construction** (historical): `test_known_issue_b15_scalar_r1cs_not_foldable_over_base` still asserts that v1 rejects the class, and the 4 v1 multi-step tests stay `#[ignore = "known issue B15 (v1 path only …)"]` with a pointer to their v2 ports. |
 | B16 (new) | σ,τ not absorbed before δ; ε,θ not absorbed before ρ (prover could choose them after seeing the challenge) | **Fixed** (native and gadget, both variants); `test_nifs_rho_binds_y_claims` |
 | B17 (new) | Commitment keys sized from unpadded shapes; `RecursiveSNARK::new` panicked (`ck.len() >= v.len()`) | **Fixed**: keys sized from padded shapes and `num_vars_max` |
-| **B18** (new, found 2026-11-03 in P3.0) | Inherited Nova tests fail, and did so before P0 (P0 touched none of `provider/`, `nova/`, `spartan/`, `r1cs/`, `traits/` or the lock file): `nova::tests::test_ivc_{nondet,nontrivial}_with_compression` and `test_ivc_nontrivial_with_spark_compression` panic at `provider/pedersen.rs:340` (commitment key shorter than the padded vector, like B17); `test_pp_digest` has a stale pinned digest. Uniform `RecursiveSNARK` tests pass. | **Open.** Not on the B15 path. Must be fixed before P7 (compression reuses Spartan/IPA) and before Nova is used as a P8 baseline. |
+| **B18** (new, found 2026-11-03 in P3.0) | Inherited Nova tests failed, and had failed since before P0: `nova::tests::test_ivc_{nondet,nontrivial}_with_compression` and `test_ivc_nontrivial_with_spark_compression` panicked at `provider/pedersen.rs:340` in `CommitmentKeyExtTrait::split_at` ("range end index 16384 out of range for slice of length 10349 / 9821"); `test_pp_digest` reported a stale digest (expected `fbd08d8d…`, got `6a6add31…`). **Root cause (one cause for both):** commit `15a7c8a` ("add readme") changed Pedersen `CommitmentEngine::setup` from `from_label(label, n.next_power_of_two() + 1)` (upstream Nova v0.42) to `from_label(label, n + 1)`. Uniform Nova sizes its keys with `R1CSShape::commitment_key` = `max(num_cons, num_vars, ck_hint)` and relied on that implicit rounding: Spartan/IPA commit to the `pad()`ded shape (size `next_power_of_two`, here 16384) and Spark to power-of-two vectors. The `PublicParams` digest serializes `ck_primary`/`ck_secondary`, so the shorter keys also changed the digest. No dependency or serialization change was involved. | **Fixed** (branch `b18-nova-tests`): `R1CSShape::commitment_key` rounds its size up to the next power of two, which restores upstream key lengths in the uniform Nova path. Pedersen `setup` is unchanged, so kilonova's keys (sized directly via `CE::setup` from padded shapes, B17) and the HFS transcript are untouched. Generators come from one SHAKE256 stream, so a longer key only appends generators. Evidence: `nova::tests::test_` 11 passed / 2 ignored (B15), with **`test_pp_digest` passing against the original pinned `fbd08d8d…` value, not updated**. `kilonova` suite unchanged on top of P3 (`p3-native-hfs`): 53 passed / 5 ignored, as in `docs/P3-report.md` (on `p2-ccs`: 29 passed / 5 ignored). |
 
 ## 5. Tests added in P0
 
@@ -106,6 +106,8 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 cargo test -p nova-snark --release --lib kilonova -- --test-threads=1
 # fixed-point sizes
 cargo test -p nova-snark --release --lib kilonova::tests::test_setup_fixed_point_converges -- --nocapture
+# inherited uniform Nova tests (B18)
+cargo test -p nova-snark --release --lib nova::tests::test_ -- --test-threads=1
 # show the B15 failure of the historical v1 path
 cargo test -p nova-snark --release --lib kilonova::tests::test_ivc_nontrivial_nonuniform_smoke -- --ignored --test-threads=1
 # the same trace on the v2 recursion (P5)
