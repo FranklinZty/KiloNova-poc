@@ -981,7 +981,15 @@ fn tampered_chain(
   let (pp, prog) = setup::<Direct>(2, PrimaryTemplate::R1cs);
   let ids: Vec<usize> = (0..len).map(|i| i % 2).collect();
   let z0 = z0_for(&prog, &app0(), &ids);
-  let force = |n: usize| forced.and_then(|(s, k)| (s == n).then_some(k));
+  // the host runs the schedule `ids` (= φ on an honest state), except a forced id at one step;
+  // after a deviation φ no longer selects anything sensible, so the host keeps following `ids`
+  let force = |n: usize| {
+    Some(
+      forced
+        .and_then(|(s, k)| (s == n).then_some(k))
+        .unwrap_or(ids[n]),
+    )
+  };
   let mut snark = Snark::<Direct>::new_tampered(&pp, &prog, &z0, force(0)).unwrap();
   for n in 1..len {
     let t = if n == at { tamper } else { Tamper::None };
