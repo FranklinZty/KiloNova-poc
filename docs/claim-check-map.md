@@ -21,7 +21,7 @@ Status legend: ✅ checked, ⏩ deferred to a later layer by design, ❌ gap.
 | ε, θ bound before ρ | transcript | `absorb_y_claims` | `tag_y_claims` + absorb | ✅ (fixed B16) |
 | ε_j = M̃′_j(r′), ε_3 = z̃′(r_y′), θ_j = M̃_j(r′), θ_3 = z̃(r_y′) | prover | **not checked here** | **not checked here** (previously recomputed from witnesses, which broke the fixed point, F1) | ⏩ folded into `v* = ε + ρθ`, checked by the decider |
 | Output: `comm_W* = comm_W1 + ρ·comm_W2`, `comm_M* = comm_M1 + ρ·ι`, `u* = u1 + ρ`, `X* = X1 + ρX2`, `r* = (r_x′, r_y′)` | verifier | `FoldedInstance::fold` | `W_fold`, `M_fold_*` (scalar_mul + add), `u_fold`, `x_fold_*`, `v_fold_*` | ✅; native = gadget checked by `test_transcript_native_matches_gadget_*` |
-| Incoming predicate id = the circuit's id | host | `predicate_id < K` | `predicate_id_match` | ✅ (host constant; φ missing: G4) |
+| Incoming predicate id = the circuit's id | host | `predicate_id < K` | `predicate_id_match` | ✅ (v1: host constant; φ missing. v2 recursion: φ enforced in-circuit, P4, §6) |
 | **Incoming R1CS holds over its own field** | — | zero-check over `F_B` | zero-check over `F_B` | ❌ **B15**: checked over the wrong field |
 
 ## 2. Decider claims (`GlobalStructure::is_sat`, `RecursiveSNARK::verify`)
@@ -34,7 +34,7 @@ Status legend: ✅ checked, ⏩ deferred to a later layer by design, ❌ gap.
 | Secondary last instance satisfies its R1CS | verify | `shape.is_sat(l_u_secondary)` | ✅ |
 | Link hashes match public IO of `l_u_secondary` | verify | `hash_primary`, `hash_secondary` | ✅ |
 | Step count, z0, IO lengths | verify | `invalid` check | ✅ |
-| Predicate trace | verify | recomputes `update_trace_digest` from the **verifier-supplied** trace | ⚠️ **G3**: the trace is an input, not recovered from the proof; the digest is not collision resistant (N15). → P4 |
+| Predicate trace | verify | recomputes `update_trace_digest` from the **verifier-supplied** trace | ⚠️ v1 only (historical, B15). The v2 recursion recovers the trace from the proof (P4, §6). |
 
 ## 3. Gaps G1–G5 (status after P0)
 
@@ -42,8 +42,8 @@ Status legend: ✅ checked, ⏩ deferred to a later layer by design, ❌ gap.
 |---|---|---|---|
 | G1 | In-circuit M not bound to λ | **Closed by design.** The binding is a decider check (above). The old circuit allocated λ as an unconstrained witness, which neither bound it nor was needed. | — |
 | G2 | Verifier needs private witnesses; no CompressedSNARK | Open; same as Nova's uncompressed `RecursiveSNARK` | P7 (P7a reference-basis decider) |
-| G3 | Predicate trace supplied to the verifier | Open | P4 (Poseidon trace chain), P6 |
-| G4 | No in-circuit φ; id is a host constant | Open | P4 |
+| G3 | Predicate trace supplied to the verifier | **Closed for the v2 recursion (P4)**: `ivc::RecursiveSNARK::verify(pp, n, z_0)` takes no schedule and returns the trace hash recovered from the proof; `verify_schedule` only compares it. v1 unchanged (historical). | P6 (trees) |
+| G4 | No in-circuit φ; id is a host constant | **Closed for the v2 recursion (P4)**: every primary circuit evaluates the program's φ on its input state and enforces `φ(i, z_i) = k` (`ivc::program`). v1 unchanged (historical). | — |
 | G5 | Direct and Span differ in security: Span makes λ public (O(K) public state); its decider has no comm_M check | Documented; Span folds λ in-circuit with field additions only (no group operations) | Ablation interpretation in P8/P9 (PLAN §8, item 3) |
 
 ## 4. Field / challenge producer–consumer table
@@ -96,13 +96,33 @@ Spec: `docs/protocol-spec.md` §9. "Gadget" is the primary circuit (`ivc/circuit
 | `comm_W* = comm_W + ρ·comm_W_u`, `comm_M*[j] = comm_M[j] + ρ·ι_{k_prev}[j]` | hints | CF circuit (public inputs built in-circuit from the same limbs) | CF accumulator → Final/CycleFold | `test_cyclefold_circuit` (wrong output, ρ, k), `test_ivc_rejects_unbound_hint`, `test_ivc_rejects_bad_cyclefold_witness` | ✅ |
 | ι selected by the folded instance's predicate inside CF (not an input) | CF | one-hot over K | CF | `test_cyclefold_circuit` (wrong k) | ✅ |
 | CycleFold instance folded into the accumulator with r binding (pp, U, u, T) | prover T | `AllocatedRelaxedR1CSInstanceN::fold_with_r1cs` = `cf_fold_verify` | Gadget | `test_cyclefold_fold_native_matches_gadget` | ✅ |
-| Link: `u_i.io = H(pp, hfs, i, z_0, z_i, trace_i, U_i, cfU_i)` unless base | previous circuit | Gadget equality OR is_base | Gadget → Final | `test_ivc_rejects_broken_state_link`, `test_ivc_rejects_repeated_counter` | ✅ |
-| Step counter, z_0, z_n, schedule, U_n, cfU_n bound at the end | last circuit | `verify`: link hash | Final/LinkHash | `test_ivc_rejects_wrong_claims` (wrong z_0, skipped step, wrong counter, swapped steps, wrong predicate) | ✅ |
-| Predicate id of each step enters the trace in-circuit (constant of the circuit) | circuit k | Poseidon chain; verifier recomputes from `ids` | Final/LinkHash | `test_ivc_rejects_wrong_claims` | ✅ (N15 closed for v2; G3: `ids` still an input) |
+| Link: `u_i.io = H(pp, fam, i, z_0, z_i, trace_i, U_i, cfU_i)` unless base (P4: the digest slot is the family digest) | previous circuit | Gadget equality OR is_base | Gadget → Final | `test_ivc_rejects_broken_state_link`, `test_ivc_rejects_repeated_counter` | ✅ |
+| Step counter, z_0, z_n, trace, U_n, cfU_n bound at the end | last circuit | `verify`: link hash | Final/LinkHash | `test_ivc_rejects_wrong_claims` (wrong z_0 incl. program register, skipped step, wrong counter) | ✅ |
+| Predicate id of each step enters the trace in-circuit (constant of the circuit) | circuit k | Poseidon chain; the trace hash is read from the proof and bound by the link hash (P4) | Final/LinkHash | `test_p4_rejects_forged_ids` (forged trace) | ✅ (N15 closed for v2; G3 closed P4) |
+| **φ: the executed predicate is the one the program selects**, `φ(i, z_i) = k` (P4) | circuit k | `PredicateProgram::synthesize_select` + `phi selects k` | Gadget → Final/LastIncoming | `test_p4_rejects_schedule_disagreeing_with_phi` (base, inner, last step), `test_phi_scheduled_program` | ✅ (G4 closed) |
+| Expected schedule = recovered trace (optional check) | verifier | `verify_schedule` | Final/Trace | `test_ivc_rejects_wrong_claims` (swapped steps, wrong predicate, wrong last predicate, other length) | ✅ |
+| Family digest (stable ids, canonical matrices, selector) bound in pp, every link hash and every HFS transcript | setup | `PredicateFamily`, `HfsParams::from_family`, `setup_pinned` | Setup / Final/LinkHash | `test_p4_rejects_reordered_and_substituted_family` | ✅ |
+| Last instance's claimed predicate | proof | CCS of that member (incl. its φ check) | Final/LastIncoming, Input | `test_p4_rejects_forged_ids` | ✅ |
 | Folded incoming predicate `k_prev` < K and consistent with ι / e_k / transcript | prover | one-hot in Gadget and CF | Gadget | `test_ivc_rejects_wrong_incoming_predicate` | ✅ |
 | Running ACCS satisfied (openings, claims) | — | `hfs::decide` + kn-ccs oracle in tests | Final/Decider | `test_ivc_rejects_tampered_accumulators`; oracle on every verified step of every chain test | ✅ needs W (G2) |
 | CycleFold accumulator satisfied | — | `is_sat_relaxed` | Final/CycleFold | `test_ivc_rejects_tampered_accumulators`, `test_ivc_rejects_bad_cyclefold_witness` | ✅ needs W (G2) |
-| Last incoming instance satisfies predicate ids[n−1] | — | `ccs_is_satisfied` + opening | Final/LastIncoming | `test_ivc_rejects_broken_state_link`, `test_ivc_rejects_wrong_incoming_predicate` | ✅ |
+| Last incoming instance satisfies its predicate `l_u.k` | — | `ccs_is_satisfied` + opening | Final/LastIncoming | `test_ivc_rejects_broken_state_link`, `test_ivc_rejects_wrong_incoming_predicate` | ✅ |
 | Native degree-5 application rows not lowered | shape builder | `KnShapeCS` (D/E rows) | Setup | `test_ivc_native_pow5_application`, `test_ivc_r1cs_template_rejects_pow5_rows` | ✅ |
 | Canonical limb encodings (< p) of E1 points | — | not checked (range-checked only) | — | — | ⚠️ documented limitation (spec §9.7) |
-| Trace recovered from the proof; in-circuit φ | — | — | — | — | ❌ P4 remainder (G3, G4) |
+| Trace recovered from the proof; in-circuit φ | — | see the φ / trace rows above | — | — | ✅ P4 (G3, G4 closed for v2) |
+
+## 7. Fixed predicate family and index-span (P4, `kilonova::family`)
+
+Spec: `docs/protocol-spec.md` §10. Layers are `hfs::Layer` (Input, Verifier, Decider) or `IvcLayer`.
+
+| Claim | Checker | Layer | Test | Status |
+|---|---|---|---|---|
+| Canonical member encoding = kn-ccs `encode` (byte-identical, decodes back, order/duplicate independent) | `family::encode_member` vs `kn_ccs::encode` | — | `family::tests::test_encoding_matches_kn_ccs` | ✅ |
+| Family digest binds order, matrices, ids, selector, label, key labels/sizes | `PredicateFamily::new`, `check_digest`, `check_member` | Input | `test_family_digest_binds_order_and_matrices` | ✅ |
+| Malformed family (duplicate/empty ids, dims, template, empty) and unknown ids rejected | `PredicateFamily::new`, `position`, `check_member` | Input | `test_family_rejects_unknown_or_duplicate_ids` | ✅ |
+| A fold made under another (reordered / substituted) family is rejected | `NIFS::verify` then `decide` | Verifier or Decider | `test_hfs_rejects_other_family` | ✅ |
+| Incoming index is e_k; non-unit vectors and out-of-range ids rejected | `NIFS::prove/verify` (Input), `decide` (Decider); gadget one-hot; CF ι selection | Input / Decider / Gadget / CF | `test_non_one_hot_incoming_rejected`, `ivc::tests::test_p4_one_hot_gadget_rejects_forged_bits`, `test_p4_cyclefold_rejects_non_unit_iota` | ✅ |
+| Tampered running span rejected | `decide` (SpanIndex / Claim / IndexCommitment), next sum-check, link hash | Decider / Verifier / LinkHash | `test_tampered_span_rejected`, `ivc::tests::test_p4_rejects_tampered_span` | ✅ |
+| Explicit folded matrix (step by step) = from λ = weighted evaluation = protocol claims = kn-ccs MLE; λ tracked = witness λ; support reaches the union | `FoldedMatrices`, `weighted_eval`, `decide`, `check_accs` | — | `test_span_paths_agree_k{1,2,4,16}` (Direct and Span) | ✅ |
+| Zero-term template embedding preserves semantics for every u | `kn_ccs::pad::embed_zero_terms` + HFS fold with u ≠ 1 | Decider + oracle | `test_zero_term_embedding_folds` | ✅ |
+| At least two members change the wiring | sparsity patterns of the application circuits | — | `ivc::tests::test_p4_members_change_wiring` | ✅ |

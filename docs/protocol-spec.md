@@ -44,9 +44,9 @@ Notation: `E` is the curve whose group commits the witness. `F_S = E::Scalar` is
 | N10 | Degree bounds | X rounds: degree 3 (= d+1), evaluations at {0,1,2,3}. Y rounds: degree 2, evaluations at {0,1,2}. |
 | N11 | Generality | t=3, d=2, μ=ν=1 are hard-coded (`configs/common.toml`). Generalised in P3. |
 | N12 | ι encoding | **Intentional deviation.** ι = Pedersen commitment to the K-vector λ (index-span), not `PCS.Com(M̃_j)`. The two are not equivalent. The paper notes the trade-off is "not an asymptotic improvement for every parameter choice". |
-| N13 | Predicate selection φ | Not implemented. The predicate id is a host constant bound to a witness (G4, moved to P4). |
-| N14 | Link hash | `H(pp_digest, i, z0, zi, U, r_i, trace_digest)`. Compared with the paper it adds i, z0 and the trace and omits idx; idx is bound only through `trace_digest`, which is not collision resistant (N15). Closed in P4. |
-| N15 | Trace digest | `(t + id + 1)² + id + 1`, an algebraic map, **not collision resistant**. To be replaced by a Poseidon chain in P4. |
+| N13 | Predicate selection φ | v1: not implemented (host constant bound to a witness). **v2 recursion (P4): implemented in-circuit, §9.8** (G4 closed). |
+| N14 | Link hash | v1: `H(pp_digest, i, z0, zi, U, r_i, trace_digest)`; idx bound only through the non-collision-resistant `trace_digest` (N15). **v2 recursion: §9.3 (P5) with the family digest (P4, §9.8); idx is bound by the Poseidon trace chain.** |
+| N15 | Trace digest | v1: `(t + id + 1)² + id + 1`, an algebraic map, **not collision resistant** (historical). **v2 recursion: Poseidon chain computed in-circuit (P5), recovered from the proof by the verifier (P4, §9.8).** |
 | N16 | ZK | Not provided; see §4. |
 
 ## 3. Transcript (HFS v1)
@@ -191,7 +191,7 @@ As §6, with: fold field `E::Scalar`; sponge Poseidon over `E::Scalar`; commitme
 
 ## 9. Recursive layer v1 on HFS v2 with CycleFold (P5, 2026-11-09)
 
-Code: `Nova/src/kilonova/ivc/` (`mod.rs`, `circuit.rs`, `cyclefold.rs`, `gadgets.rs`, `shape.rs`, `breakdown.rs`). Version constant `ivc::IVC_VERSION = 1`. D1 = (a). The v1 recursion (§3, `kilonova::{PublicParams, RecursiveSNARK}`) is unchanged and remains B15-broken; it is historical.
+Code: `Nova/src/kilonova/ivc/` (`mod.rs`, `circuit.rs`, `cyclefold.rs`, `gadgets.rs`, `shape.rs`, `breakdown.rs`, P4: `program.rs`). Version constant `ivc::IVC_VERSION = 2` since P4 (§9.8 lists what changed from version 1 of P5). D1 = (a). The v1 recursion (§3, `kilonova::{PublicParams, RecursiveSNARK}`) is unchanged and remains B15-broken; it is historical.
 
 ### 9.1 Curves and relations
 
@@ -219,7 +219,9 @@ x_cf = (ρ, [k_prev], U_i.W, u_i.W, hint_W, (U_i.M[j], hint_M[j])_j)   as bignat
 cfU' = NIFS_cf.fold(cfU_i, (cf_comm_W, x_cf), cf_T)                   (§9.4)
 U_{i+1} = is_base ? U_default : U' ; cfU_{i+1} = is_base ? cfU_default : cfU'
 trace_{i+1} = H(TAG_TRACE, is_base ? 0 : trace_i, k)                   k is a constant
-z_{i+1} = F_k(is_base ? z_0 : z_i)
+z_in = is_base ? z_0 : z_i
+enforce φ(i, z_in) = k                                                (P4, §9.8)
+z_{i+1} = F_k(z_in)
 output h = H_link(pp, hfs, i + 1, z_0, z_{i+1}, trace_{i+1}, U_{i+1}, cfU_{i+1})
 ```
 
@@ -242,7 +244,42 @@ Template `R1csPow5`: t = 5, terms `[A,B]·1, [C]·(−1), [D,D,D,D,D]·1, [E]·(
 ### 9.7 Known limitations of this layer
 
 - No compression; `verify` reads the final witnesses (G2, P7).
-- The verifier receives the schedule (G3); there is no in-circuit φ (G4). Claim: "this specific trace".
+- (P5 only, closed in P4 by §9.8: the verifier received the schedule (G3) and there was no in-circuit φ (G4).)
+- φ reads only the public state `(i, z_i)`; non-deterministic selection (φ reading private advice) is not supported (it would weaken the claim of §9.8).
 - Limb encodings of E1 points are range-checked but not checked to be canonical (< p). A coordinate has at most 4 integer encodings below 2^256; a non-canonical one gives the prover another transcript/challenge for the same point, never a different point (the CycleFold relation and the final canonical link hash pin the value). Closing it costs one comparison per coordinate.
 - `ρ` incomplete-addition edge cases of `scalar_mul` (as in Nova) are not handled separately.
 - No knowledge-soundness proof is written for the composed scheme (PLAN.md §2).
+
+### 9.8 Fixed family, in-circuit selection φ and trace recovery (P4, IVC version 2)
+
+Changes against IVC version 1 (P5), all deliberate (`docs/P4-plan.md`):
+
+- **Tags.** `TAG_LINK = 0x4b4e_4956_4302_0001`, `TAG_TRACE = 0x4b4e_4956_4302_0002` (were `…4301…`). HFS transcript v2 (§8.5) is unchanged; its vectors are untouched.
+- **Family digest.** The K primary circuits form a `PredicateFamily` (§10). `HfsParams::from_family` makes the family digest the digest absorbed by every HFS v2 transcript (native and in-circuit), and the link hash's second slot (`hfs` in §9.3) is that same value. `pp_digest` covers the family digest (instead of the P5 structure digest), the CycleFold shape digest and key, arity, K, variant, template and the version.
+- **φ (G4).** A `PredicateProgram` supplies `φ(i, z) → k` natively and as a circuit. The primary circuit of predicate k computes `sel = φ(i, z_in)` with `z_in = is_base ? z_0 : z_i` and enforces `sel = k` (namespace `phi`, breakdown category `selection`). The next predicate is thus a function of the state the current step produced; a predicate that chooses its successor writes a pc register in z.
+- **Deterministic-schedule program** `Scheduled<P>`: state `(z_app ‖ prog)`; `prog = Σ_i k_i 2^{b·i}` with `b = max(1, ⌈log₂ K⌉)`; φ decomposes `prog` into `L = b·⌊253/b⌋` boolean bits with `Σ 2^j b_j = prog` (unique because `2^L ≤ 2^253 < p`) and returns the low b bits; every F_k sets `prog' = (prog − k)/2^b` with one constraint `2^b·prog' = prog − k` (exact because φ forced the low digit to k). Capacity `⌊253/b⌋` steps (K = 2: 253, K = 4: 126, K = 16: 63); afterwards `prog = 0` selects member 0. Cost: `L + 2` constraints for φ plus 1 for the shift. Selector descriptor `"kn-phi-scheduled-v1" ‖ b ‖ L ‖ arity(P)` (u64 LE).
+- **Verifier (G3).** `RecursiveSNARK::verify(pp, n, z_0) → ChainOutput { z_n, trace, last_id }`: Input (n ≥ 1, |z_0| = arity, `l_u.k < K`); LinkHash with the **trace hash read from the proof**; Decider; CycleFold; LastIncoming (CCS of member `l_u.k`, which includes its φ check). `verify_schedule(pp, n, z_0, ids)` runs `verify` and then requires `|ids| = n` and `H_trace*(ids) = trace` (new layer **Trace**). The schedule is never an input to verification.
+- **Prover.** `new(pp, program, z_0)` uses `k_0 = φ(0, z_0)`; `prove_step(pp, program)` uses `k = φ(i, z_i)`. Test hooks force other ids.
+
+**Claim.** For public `(pp, n, z_0)` an accepting `verify` shows (up to the knowledge soundness of the folding layers, which is not proven, §8.7): there are states `z_0, …, z_n` and ids `k_0, …, k_{n−1}` with `k_i = φ(i, z_i)`, `z_{i+1} = F_{k_i}(z_i)` for some witness of `F_{k_i}`, and `trace = H_trace*(k_0, …, k_{n−1})` (Poseidon chain, collision resistant). When φ and all F_k are deterministic functions of the state (every fixture here), the id sequence is unique given `z_0`, so the claim is **"this specific trace"** and `trace` identifies it; `verify_schedule` checks it against an expected list. For non-deterministic F_k the claim is "**some φ-valid trace with this digest exists**".
+
+## 10. Fixed predicate family and index-span (P4)
+
+Code: `Nova/src/kilonova/family/`. Tests: `family::tests` and the P4 tests in `ivc::tests`.
+
+### 10.1 `PredicateFamily`
+
+- Members: K ≥ 1 `CcsShape`s with one `CcsTemplate`, identical `(m, num_w, num_io)`, t matrices each; **stable ids** (non-empty, unique strings; position k is the protocol id used for e_k, ι_k, the transcript and the trace); public interface `arity` (state length) and `num_io`; a selector descriptor (canonical bytes of φ); a label.
+- **Canonical member encoding** (identical to `kn_ccs::encode`): `"KNCCS\x01" | m | num_w | num_io | t | q | q × (coeff | len | len × index) | t × (nnz | nnz × (row | col | value))`, integers u64 LE, field elements `F::Repr`, entries sorted by (row, col), duplicates summed, zeros dropped. `member_digest = SHA3-256(encoding)`.
+- **Family digest** = `DigestComputer` (SHA3-256 → 250-bit field element) over bincode(legacy, fixint, LE) of `(FAMILY_VERSION = 1, label, arity, num_io, selector, ids[K], member_digest[K], "kn-hfs-v2-ck", max(num_w, 1), "kn-hfs-v2-index", t·K)`. Reordering members, substituting any matrix entry, renaming an id, changing φ or the label changes it.
+- Checks (layer Input): `PredicateFamily::new` (validation), `check_digest(expected)` (pinned family), `check_member(k, template, shape)` (substitution), `position(id)`. Recursion: `PublicParams::setup_pinned` (layer Setup).
+
+### 10.2 Index-span paths
+
+- Incoming input: only k is transmitted; its index is e_k (Span) or ι_k (Direct). The running λ is updated by the fold challenge, `λ ← λ + ρ·e_k` (first fold from μ = 0: weight 1), and is not one-hot after the second distinct member.
+- **Weighted-evaluation path** (what the decider does): `v_j = Σ_k λ_k M̃_{k,j}(r_x, r_y)` over the K fixed base matrices; cost O(Σ_k nnz(M_k)) per evaluation, state λ (K field elements).
+- **Explicit folded-matrix path**: `M_{λ,j} = Σ_k λ_k M_{k,j}` materialised, updated per step by `M ← M + ρ·M_k` (sorted merge), evaluated directly. Its support is `∪_{k folded so far} supp(M_k)` (no cancellation for random ρ, asserted by the tests), so after every member has been folded it is the **union of supports**.
+
+### 10.3 K-dependent density cost
+
+λ becomes dense after K distinct members have been folded, so any representation of the folded index pays for the union of the members' supports: the explicit matrix has `U = Σ_j |∪_k supp(M_{k,j})|` non-zeros, between `max_k nnz(M_k)` (identical supports) and `Σ_k nnz(M_k)` (disjoint supports). The weighted path keeps only λ but evaluates all K base matrices (`Σ_k nnz(M_k)` work) at the decider. Measured (`results/raw/p4-family.jsonl`, `docs/P4-report.md` §3): see the report; summary in §10.4.

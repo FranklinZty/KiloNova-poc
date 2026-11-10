@@ -40,7 +40,7 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | B4 | U1 and ι′ not in the transcript | **Fixed** at all 4 sites, with domain tags. `test_nifs_rejects_substituted_running_instance` fails on the old code and passes on the new. |
 | B5 | In-circuit M not bound to commit(λ) (G1) | **Closed by design**: decider check (`docs/claim-check-map.md` §3) |
 | B6 | No CompressedSNARK; verify needs witnesses (G2) | Deferred to **P7** |
-| B7 | No in-circuit φ; trace supplied to verifier (G3/G4) | Deferred to **P4/P6**. P5 (v2 recursion): the trace is a Poseidon chain computed in-circuit over each circuit's constant id (N15 closed for v2); the verifier still receives the schedule (G3) and there is no φ (G4). |
+| B7 | No in-circuit φ; trace supplied to verifier (G3/G4) | **Closed for the v2 recursion (P4, 2026-11-10).** N15: the trace is a Poseidon chain computed in-circuit over each circuit's constant id (P5). G4: every primary circuit evaluates the program's selection function φ on its input state and enforces `φ(i, z_i) = k` (`ivc::program`, spec §9.8). G3: `ivc::RecursiveSNARK::verify(pp, n, z_0)` takes no schedule and returns the trace hash recovered from the proof; `verify_schedule` only compares it with an expected schedule (`docs/P4-report.md`). The v1 path is unchanged (historical, B15): it still takes the trace and uses the algebraic digest. P6 extends this to trees. |
 | B8 | NIFS unit tests only fold predicates with identical coefficients | **Closed in P3 for the v2 HFS**: `hfs::tests::test_chain_100_{r1cs,power5}_{direct,span}` fold two predicates with different wiring, negative coefficients and wrapping values for 100 alternating steps, every step accepted by the verifier, the decider and the kn-ccs oracle. The v1 unit tests are unchanged. |
 | B9 | `test_cross_predicate_fold_sat` drops sigmas and never calls is_sat | **Superseded in P3** by the v2 cross-predicate tests (real NIFS, decider and oracle on every fold: the chain tests, `test_mu_nu_combinations`, `proptest_random_ccs_fold`). The v1 test itself is unchanged (v1 is frozen until P5). |
 | B10 | Test fixtures use empty matrices, `pp_digest = 42` and zero witnesses | **Closed for v2 in P3**: v2 tests use `kn_ccs::gen::wiring_pair` and `random_satisfiable` (real matrices, full-field witnesses) and the real structure digest. v1 unit fixtures unchanged. |
@@ -86,6 +86,18 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | `kilonova::ivc::tests::test_ivc_rejects_*` | wrong initial state, skipped step, wrong/repeated counter, swapped steps, wrong predicate, broken state link, unbound hint, bad CycleFold witness, tampered accumulators, each with its layer |
 | `kilonova::ivc::tests::test_constraint_breakdown`, `test_primary_circuit_is_succinct` | per-component counts (disjoint, sum = CountingCS total), succinctness |
 | `kilonova::ivc::tests::test_ivc_native_pow5_application`, `test_ivc_r1cs_template_rejects_pow5_rows` | native degree-5 application in the loop |
+
+## 5d. Tests added in P4 (fixed predicate family, φ, index-span, `docs/P4-report.md`)
+
+| Test | Purpose |
+|---|---|
+| `kilonova::family::tests::test_encoding_matches_kn_ccs` | canonical member encoding = `kn_ccs::encode` byte for byte |
+| `kilonova::family::tests::test_family_digest_binds_order_and_matrices`, `test_family_rejects_unknown_or_duplicate_ids`, `test_hfs_rejects_other_family` | family digest; reordered / substituted / malformed families and forged ids rejected (Input, Verifier/Decider) |
+| `kilonova::family::tests::test_span_paths_agree_k{1,2,4,16}` | explicit folded-matrix path = weighted-evaluation path = protocol claims = kn-ccs (Direct, Span) |
+| `kilonova::family::tests::test_non_one_hot_incoming_rejected`, `test_tampered_span_rejected`, `test_zero_term_embedding_folds` | non-unit incoming index, tampered span, zero-term template embedding |
+| `kilonova::ivc::tests::test_phi_scheduled_program`, `test_p4_members_change_wiring`, `test_p4_one_hot_gadget_rejects_forged_bits`, `test_p4_cyclefold_rejects_non_unit_iota` | φ (native = in-circuit), wiring, one-hot / ι selection |
+| `kilonova::ivc::tests::test_p4_rejects_{schedule_disagreeing_with_phi,forged_ids,reordered_and_substituted_family,tampered_span}` | recursion-level P4 rejections with their layers |
+| `kilonova::ivc::tests::test_ivc_chain_k16` (ignored, run explicitly) | K = 16 recursive chain |
 
 ## 6. Reproduce
 

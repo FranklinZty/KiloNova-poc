@@ -27,13 +27,22 @@ sponge           = "Poseidon over E::Scalar (E::RO2)"            # D1 = (a), dec
 commitment_absorb = "x limbs, y limbs (4 x 64 bits, LSB first), is_infinity"
 tags             = ["0x4b4e484653020001", "0x4b4e484653020002", "0x4b4e484653020003", "0x4b4e484653020004"]
 
-[recursion_v2]                # P5, Nova/src/kilonova/ivc, docs/protocol-spec.md section 9
-version          = 1          # ivc::IVC_VERSION
+[recursion_v2]                # P5, Nova/src/kilonova/ivc, docs/protocol-spec.md section 9 (P4: section 9.8)
+version          = 2          # ivc::IVC_VERSION (1 = P5; 2 = P4: family digest, in-circuit phi, verifier without schedule)
 d1               = "(a) Nova fork + CycleFold"
 primary          = "one augmented circuit per predicate over E1::Scalar (Pallas), padded to common (m, num_w), num_io = 1"
 cyclefold        = "R1CS over E2::Scalar = E1::Base, inputs rho,[k],W_run,W_inc,W_out,(M_run[j],M_out[j]); 8 + 4t (Direct) or 7 (Span)"
 cyclefold_fold   = "Nova relaxed-R1CS NIFS, n inputs, running instance absorbed, tag 0x4b4e434600010001"
-tags             = ["0x4b4e495643010001 (link)", "0x4b4e495643010002 (trace)"]
+tags             = ["0x4b4e495643020001 (link)", "0x4b4e495643020002 (trace)"]   # IVC v2 (P4); v1 used 0x...4301...
+selection        = "phi(i, z_i) evaluated in the circuit of predicate k, enforced = k (P4, G4)"
+schedule_program = "Scheduled<P>: prog register, digits of b = max(1, ceil(log2 K)) bits, L = b*floor(253/b) decomposed bits"
+verifier         = "verify(pp, n, z0) -> (z_n, trace, last_id); verify_schedule compares the recovered trace (layer Trace)"
+
+[family]                      # P4, Nova/src/kilonova/family, docs/protocol-spec.md section 10
+version          = 1          # family::FAMILY_VERSION
+member_encoding  = "kn_ccs::encode layout (KNCCS 0x01), canonical entries"
+digest           = "SHA3-256 -> 250-bit field element over (version, label, arity, num_io, selector, ids, member SHA3 digests, key labels/sizes)"
+k_max_fixture    = 16         # ivc::fixtures::MAX_CHAIN_K
 templates        = ["R1CS (t=3, d=2)", "R1CS + native power rows (t=5, d=5)"]
 
 [setup]
