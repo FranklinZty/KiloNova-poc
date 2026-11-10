@@ -1,5 +1,7 @@
 //! P5 tests: CycleFold circuit, n-input fold gadget, HFS v2 gadget (native = gadget),
 //! recursive chains, rejections with their detection layer, and the constraint breakdown.
+//! P4 tests: φ (scheduled program), the verifier without a schedule (trace recovery), family
+//! reorder/substitution, forged ids, tampered spans, non-one-hot inputs, wiring, K = 16.
 //!
 //! Memory: run with `--release --test-threads=1` (16 GB machines). Long chains are `#[ignore]`d
 //! and run explicitly (see `docs/P5-report.md`).
@@ -9,13 +11,13 @@ use super::{
     cf_fold_prove, cf_fold_verify, cyclefold_instance_witness, num_inputs, Coords,
     CycleFoldCircuit, CycleFoldInputs,
   },
-  fixtures::ChainPredicates,
+  fixtures::{example_program, ChainPredicates},
   gadgets::{
-    alloc_vec, one_hot, verify_hfs, AllocIncoming, AllocIndex, AllocProof, AllocRunning,
-    AllocatedRelaxedR1CSInstanceN, Expr, HfsGadgetParams, NnPoint,
+    alloc_vec, one_hot, one_hot_with, verify_hfs, AllocIncoming, AllocIndex, AllocProof,
+    AllocRunning, AllocatedRelaxedR1CSInstanceN, Expr, HfsGadgetParams, NnPoint,
   },
-  primary_constraint_counts, IvcError, IvcLayer, IvcVariant, PrimaryTemplate, PublicParams,
-  RecursiveSNARK, Tamper,
+  primary_constraint_counts, IvcError, IvcLayer, IvcVariant, PredicateProgram, PrimaryTemplate,
+  PublicParams, RecursiveSNARK, Scheduled, Tamper,
 };
 use crate::{
   constants::{BN_LIMB_WIDTH, BN_N_LIMBS, NUM_CHALLENGE_BITS},
@@ -31,9 +33,7 @@ use crate::{
       CcsShape, CcsTemplate, Direct, HfsParams, IncomingInstance, RunningInstance, RunningWitness,
       Span, Variant, NIFS,
     },
-    shape_cs_to_shape,
-    test_utils::ExamplePredicates,
-    PredicateSet,
+    shape_cs_to_shape, PredicateSet,
   },
   provider::{PallasEngine, VestaEngine},
   r1cs::{RelaxedR1CSInstance, RelaxedR1CSWitness},
@@ -596,52 +596,77 @@ fn test_transcript_native_matches_gadget_v2_span() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Recursive chains
+// Recursive chains (P4: the schedule is a program run by φ; the verifier takes no schedule)
 // ---------------------------------------------------------------------------------------------
 
 type Pp<V> = PublicParams<E1, E2, V>;
 type Snark<V> = RecursiveSNARK<E1, E2, V>;
+type Prog = Scheduled<ChainPredicates<F>>;
 
-fn z0() -> Vec<F> {
+/// Application part of the initial state.
+fn app0() -> Vec<F> {
   vec![F::from(3), F::from(5)]
 }
 
-fn setup<V: IvcVariant<E1>>(k: usize, tpl: PrimaryTemplate) -> (Pp<V>, ChainPredicates<F>) {
-  let preds = ChainPredicates::<F>::new(k, tpl == PrimaryTemplate::R1csPow5);
-  let (pp, report) = Pp::<V>::setup(&preds, tpl).unwrap();
+/// The initial state that makes φ run `ids`.
+fn z0_for<P: PredicateSet<F>>(prog: &Scheduled<P>, app: &[F], ids: &[usize]) -> Vec<F> {
+  prog
+    .z0(app, ids)
+    .expect("schedule fits the program register")
+}
+
+fn setup_prog<V: IvcVariant<E1>>(prog: &Prog, tpl: PrimaryTemplate) -> Pp<V> {
+  let (pp, report) = Pp::<V>::setup(prog, tpl).unwrap();
   println!(
-    "[ivc setup] {} K={k} {:?}: iterations {:?}, m = {}, num_w = {}, CycleFold {:?} -> {:?}",
+    "[ivc setup] {} K={} {:?}: iterations {:?}, m = {}, num_w = {}, CycleFold {:?} -> {:?}, family digest {:?}",
     V::NAME,
+    prog.num_predicates(),
     tpl,
     report.iterations,
     report.primary_m,
     report.primary_num_w,
     report.cyclefold_raw,
-    report.cyclefold_padded
+    report.cyclefold_padded,
+    pp.family().digest()
   );
-  (pp, preds)
+  pp
 }
 
-/// Proves `ids` and verifies after the steps in `check` (1-based) and at the end, each time
-/// with the kn-ccs oracle on the running instance.
-fn run_chain<V: IvcVariant<E1>>(
-  pp: &Pp<V>,
-  preds: &ChainPredicates<F>,
-  ids: &[usize],
-  every: usize,
-) -> Snark<V> {
+fn setup<V: IvcVariant<E1>>(k: usize, tpl: PrimaryTemplate) -> (Pp<V>, Prog) {
+  let prog = ChainPredicates::<F>::new(k, tpl == PrimaryTemplate::R1csPow5).program();
+  (setup_prog::<V>(&prog, tpl), prog)
+}
+
+/// Proves the program whose register encodes `ids` (φ chooses every step; the host only says
+/// "next") and verifies after the steps in `check` (1-based) and at the end, each time with
+/// the kn-ccs oracle on the running instance. `verify` gets no schedule; the recovered trace is
+/// compared with `ids` (`verify_schedule`) and the state with the native run.
+fn run_chain<V: IvcVariant<E1>>(pp: &Pp<V>, prog: &Prog, ids: &[usize], every: usize) -> Snark<V> {
   let fam = kn_family(pp.hfs());
-  let z0 = z0();
-  let mut snark = Snark::<V>::new(pp, preds, &z0, ids[0]).unwrap();
+  let z0 = z0_for(prog, &app0(), ids);
+  let mut snark = Snark::<V>::new(pp, prog, &z0).unwrap();
   for n in 1..=ids.len() {
     if n > 1 {
-      snark.prove_step(pp, preds, ids[n - 1]).unwrap();
+      assert_eq!(
+        snark.next_predicate(prog),
+        Some(ids[n - 1]),
+        "φ follows the program"
+      );
+      snark.prove_step(pp, prog).unwrap();
     }
     if n % every == 0 || n == ids.len() || n == 1 {
-      let zn = snark
-        .verify(pp, n, &z0, &ids[..n])
+      let out = snark
+        .verify(pp, n, &z0)
         .unwrap_or_else(|e| panic!("verify after step {n}: {e} (layer {:?})", e.layer()));
-      assert_eq!(zn, preds.run(&z0, &ids[..n]));
+      assert_eq!(out.trace, pp.trace_of(&ids[..n]), "recovered trace");
+      assert_eq!(out.last_id, ids[n - 1]);
+      assert_eq!(out.zn[..2], prog.inner().run(&app0(), &ids[..n])[..]);
+      assert_eq!(
+        out.zn[2],
+        prog.encode::<F>(&ids[n..]).unwrap(),
+        "rest of the program"
+      );
+      assert_eq!(snark.verify_schedule(pp, n, &z0, &ids[..n]).unwrap(), out);
       let (u, w) = snark.running();
       oracle(pp.hfs(), &fam, u, w);
     }
@@ -665,24 +690,24 @@ fn schedule(k: usize, t: usize, seed: u64) -> Vec<usize> {
 /// K = 2, T = 1 and T = 16 (Direct), every step verified for T ≤ 4, then every 4th.
 #[test]
 fn test_ivc_chain_k2_direct() {
-  let (pp, preds) = setup::<Direct>(2, PrimaryTemplate::R1cs);
-  run_chain(&pp, &preds, &[1], 1);
-  run_chain(&pp, &preds, &schedule(2, 16, 101), 4);
+  let (pp, prog) = setup::<Direct>(2, PrimaryTemplate::R1cs);
+  run_chain(&pp, &prog, &[1], 1);
+  run_chain(&pp, &prog, &schedule(2, 16, 101), 4);
 }
 
 /// K = 2, T = 16 (Span).
 #[test]
 fn test_ivc_chain_k2_span() {
-  let (pp, preds) = setup::<Span>(2, PrimaryTemplate::R1cs);
-  run_chain(&pp, &preds, &[0], 1);
-  run_chain(&pp, &preds, &schedule(2, 16, 202), 4);
+  let (pp, prog) = setup::<Span>(2, PrimaryTemplate::R1cs);
+  run_chain(&pp, &prog, &[0], 1);
+  run_chain(&pp, &prog, &schedule(2, 16, 202), 4);
 }
 
 /// K = 4, T = 16 (Direct).
 #[test]
 fn test_ivc_chain_k4_t16_direct() {
-  let (pp, preds) = setup::<Direct>(4, PrimaryTemplate::R1cs);
-  run_chain(&pp, &preds, &schedule(4, 16, 303), 8);
+  let (pp, prog) = setup::<Direct>(4, PrimaryTemplate::R1cs);
+  run_chain(&pp, &prog, &schedule(4, 16, 303), 8);
 }
 
 /// K = 2 and 4, T = 64 (Direct). Long: run explicitly with `--ignored`.
@@ -690,8 +715,8 @@ fn test_ivc_chain_k4_t16_direct() {
 #[ignore = "long (T = 64); run explicitly: cargo test --release --lib kilonova::ivc::tests::test_ivc_chain_t64 -- --ignored --test-threads=1"]
 fn test_ivc_chain_t64_direct() {
   for k in [2, 4] {
-    let (pp, preds) = setup::<Direct>(k, PrimaryTemplate::R1cs);
-    run_chain(&pp, &preds, &schedule(k, 64, 404 + k as u64), 16);
+    let (pp, prog) = setup::<Direct>(k, PrimaryTemplate::R1cs);
+    run_chain(&pp, &prog, &schedule(k, 64, 404 + k as u64), 16);
   }
 }
 
@@ -700,16 +725,24 @@ fn test_ivc_chain_t64_direct() {
 #[ignore = "long; run explicitly: cargo test --release --lib kilonova::ivc::tests::test_ivc_chain_span_long -- --ignored --test-threads=1"]
 fn test_ivc_chain_span_long() {
   for (k, t) in [(4, 16), (2, 64), (4, 64)] {
-    let (pp, preds) = setup::<Span>(k, PrimaryTemplate::R1cs);
-    run_chain(&pp, &preds, &schedule(k, t, 505 + (k * t) as u64), 16);
+    let (pp, prog) = setup::<Span>(k, PrimaryTemplate::R1cs);
+    run_chain(&pp, &prog, &schedule(k, t, 505 + (k * t) as u64), 16);
   }
+}
+
+/// K = 16, T = 16 (Direct): every member once. Long: run explicitly with `--ignored`.
+#[test]
+#[ignore = "long (K = 16 setup); run explicitly: cargo test --release --lib kilonova::ivc::tests::test_ivc_chain_k16 -- --ignored --test-threads=1"]
+fn test_ivc_chain_k16() {
+  let (pp, prog) = setup::<Direct>(16, PrimaryTemplate::R1cs);
+  run_chain(&pp, &prog, &schedule(16, 16, 616), 8);
 }
 
 /// Native degree-5 application inside the loop: member 0 computes x⁵ with one native row of
 /// the combined template (t = 5, d = 5). The shapes are checked not to lower it.
 #[test]
 fn test_ivc_native_pow5_application() {
-  let (pp, preds) = setup::<Direct>(2, PrimaryTemplate::R1csPow5);
+  let (pp, prog) = setup::<Direct>(2, PrimaryTemplate::R1csPow5);
   assert_eq!(pp.hfs().template().degree(), 5);
   assert_eq!(pp.hfs().t(), 5);
   let rows = |k: usize| -> (usize, usize) {
@@ -719,20 +752,16 @@ fn test_ivc_native_pow5_application() {
   // member 0 has exactly one D row entry (x) and one E row entry (x⁵); member 1 has none.
   assert_eq!(rows(0), (1, 1));
   assert_eq!(rows(1), (0, 0));
-  // and its R1CS part does not compute x⁵ (no x², x⁴ product witnesses): member 0's R1CS
-  // application rows are only the two linear outputs.
-  let snark = run_chain(&pp, &preds, &[0, 1, 0, 0, 1, 0], 2);
-  assert_eq!(
-    snark.outputs(),
-    preds.run(&z0(), &[0, 1, 0, 0, 1, 0]).as_slice()
-  );
+  let ids = [0, 1, 0, 0, 1, 0];
+  let snark = run_chain(&pp, &prog, &ids, 2);
+  assert_eq!(snark.outputs()[..2], prog.inner().run(&app0(), &ids)[..]);
 }
 
 /// The R1CS template rejects a family with native power rows at setup.
 #[test]
 fn test_ivc_r1cs_template_rejects_pow5_rows() {
-  let preds = ChainPredicates::<F>::new(2, true);
-  let res = Pp::<Direct>::setup(&preds, PrimaryTemplate::R1cs);
+  let prog = ChainPredicates::<F>::new(2, true).program();
+  let res = Pp::<Direct>::setup(&prog, PrimaryTemplate::R1cs);
   assert!(res.is_err());
 }
 
@@ -741,19 +770,21 @@ fn test_ivc_r1cs_template_rejects_pow5_rows() {
 // ---------------------------------------------------------------------------------------------
 
 fn v1_trace<V: IvcVariant<E1>>(ids: &[usize]) {
-  let preds = ExamplePredicates::<F>::default();
-  let (pp, _) = Pp::<V>::setup(&preds, PrimaryTemplate::R1cs).unwrap();
-  let z0 = vec![F::ZERO];
-  let mut snark = Snark::<V>::new(&pp, &preds, &z0, ids[0]).unwrap();
-  for (step, &id) in ids.iter().enumerate().skip(1) {
-    snark.prove_step(&pp, &preds, id).unwrap();
+  let prog = example_program::<F>();
+  let (pp, _) = Pp::<V>::setup(&prog, PrimaryTemplate::R1cs).unwrap();
+  let z0 = z0_for(&prog, &[F::ZERO], ids);
+  let mut snark = Snark::<V>::new(&pp, &prog, &z0).unwrap();
+  for step in 1..ids.len() {
+    snark.prove_step(&pp, &prog).unwrap();
     snark
-      .verify(&pp, step + 1, &z0, &ids[..=step])
+      .verify_schedule(&pp, step + 1, &z0, &ids[..=step])
       .unwrap_or_else(|e| panic!("verify after step {}: {e}", step + 1));
   }
-  let zn = snark.verify(&pp, ids.len(), &z0, ids).unwrap();
-  let direct = ids.iter().fold(z0, |z, &k| preds.output(k, &z));
-  assert_eq!(zn, direct);
+  let out = snark.verify_schedule(&pp, ids.len(), &z0, ids).unwrap();
+  let direct = ids
+    .iter()
+    .fold(vec![F::ZERO], |z, &k| prog.inner().output(k, &z));
+  assert_eq!(out.zn[..1], direct[..]);
 }
 
 /// v2 port of `kilonova::tests::test_ivc_nontrivial_nonuniform_smoke` (B15-ignored in v1).
@@ -781,10 +812,92 @@ fn test_ivc_v2_nonuniform_span() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// φ and the program register (no setup)
+// ---------------------------------------------------------------------------------------------
+
+/// The scheduled program: native φ = in-circuit φ, encode/select round trip, a register that
+/// is too large or a forged decomposition is unsatisfiable, and `prog' = (prog − k)/2^b`.
+#[test]
+fn test_phi_scheduled_program() {
+  for k in [1usize, 2, 3, 4, 16] {
+    let prog = ChainPredicates::<F>::new(k, false).program();
+    let mut rng = ChaCha20Rng::seed_from_u64(k as u64);
+    let ids: Vec<usize> = (0..prog.capacity())
+      .map(|_| (rand_core::RngCore::next_u32(&mut rng) as usize) % k)
+      .collect();
+    let mut z = z0_for(&prog, &app0(), &ids);
+    for (i, &id) in ids.iter().enumerate().take(20) {
+      assert_eq!(prog.select(i, &z), Some(id));
+      // in-circuit φ and the step F_k agree with the native ones
+      let mut cs = TestConstraintSystem::<F>::new();
+      let zi = alloc_vec(cs.namespace(|| "z"), Some(&z[..]), 3).unwrap();
+      let i_var = AllocatedNum::alloc(cs.namespace(|| "i"), || Ok(F::from(i as u64))).unwrap();
+      let sel = prog
+        .synthesize_select(&mut cs.namespace(|| "phi"), &i_var, &zi)
+        .unwrap();
+      assert_eq!(sel.get_value(), Some(F::from(id as u64)));
+      let next = prog.synthesize(id, &mut cs.namespace(|| "F"), &zi).unwrap();
+      assert!(cs.is_satisfied(), "honest φ and step");
+      let native: Vec<F> = [
+        prog.inner().output(id, &z[..2]),
+        vec![prog.encode(&ids[i + 1..]).unwrap()],
+      ]
+      .concat();
+      assert_eq!(
+        next
+          .iter()
+          .map(|v| v.get_value().unwrap())
+          .collect::<Vec<_>>(),
+        native
+      );
+      z = native;
+    }
+    // a register ≥ 2^L selects nothing and its decomposition is unsatisfiable
+    let big = F::from(2).pow_vartime([prog.decomposed_bits() as u64]);
+    assert_eq!(prog.select(0, &[F::ZERO, F::ZERO, big]), None);
+    let mut cs = TestConstraintSystem::<F>::new();
+    let zi = alloc_vec(cs.namespace(|| "z"), Some(&[F::ZERO, F::ZERO, big][..]), 3).unwrap();
+    let i_var = AllocatedNum::alloc(cs.namespace(|| "i"), || Ok(F::ZERO)).unwrap();
+    prog
+      .synthesize_select(&mut cs.namespace(|| "phi"), &i_var, &zi)
+      .unwrap();
+    assert!(!cs.is_satisfied(), "register out of range");
+  }
+  // K = 3: digit 3 selects no member
+  let prog = example_program::<F>();
+  assert_eq!(prog.select(0, &[F::ZERO, F::from(3)]), None);
+  assert_eq!(prog.encode::<F>(&[3]), None);
+  assert_eq!(prog.encode::<F>(&vec![0; prog.capacity() + 1]), None);
+}
+
+/// At least two predicates really change the wiring: the application circuits of members 0–3
+/// (and 4–15) have pairwise different sparsity patterns, not only different constants.
+#[test]
+fn test_p4_members_change_wiring() {
+  let preds = ChainPredicates::<F>::new(16, false);
+  let pattern = |id: usize| {
+    let mut cs = ShapeCS::<E1>::new();
+    let z = alloc_vec(cs.namespace(|| "z"), None, 2).unwrap();
+    preds.synthesize(id, &mut cs.namespace(|| "F"), &z).unwrap();
+    let sh = shape_cs_to_shape(&cs);
+    [&sh.A, &sh.B, &sh.C]
+      .iter()
+      .map(|m| m.iter().map(|(r, c, _)| (r, c)).collect::<Vec<_>>())
+      .collect::<Vec<_>>()
+  };
+  let pats: Vec<_> = (0..16).map(pattern).collect();
+  for a in 0..16 {
+    for b in 0..a {
+      assert_ne!(pats[a], pats[b], "members {a} and {b} share the wiring");
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Rejections (each names its detection layer)
 // ---------------------------------------------------------------------------------------------
 
-fn expect_layer(res: Result<Vec<F>, IvcError>, layer: IvcLayer, what: &str) {
+fn expect_layer<T>(res: Result<T, IvcError>, layer: IvcLayer, what: &str) {
   match res {
     Ok(_) => panic!("{what}: accepted"),
     Err(e) => assert_eq!(
@@ -795,88 +908,101 @@ fn expect_layer(res: Result<Vec<F>, IvcError>, layer: IvcLayer, what: &str) {
   }
 }
 
-/// Verifier-side claims about an honest chain: wrong initial state, skipped step, wrong
-/// counter, swapped steps and wrong predicate choice are rejected by the link hash (or by the
-/// schedule's last id).
+/// Verifier-side claims about an honest chain: wrong initial state (application part or program
+/// register), skipped step, wrong counter are rejected by the link hash; a host-supplied
+/// schedule that disagrees with the proven one (swapped steps, wrong predicate choice, wrong
+/// last predicate) is rejected by `verify_schedule` (layer Trace).
 #[test]
 fn test_ivc_rejects_wrong_claims() {
-  let (pp, preds) = setup::<Direct>(2, PrimaryTemplate::R1cs);
+  let (pp, prog) = setup::<Direct>(2, PrimaryTemplate::R1cs);
   let ids = [0usize, 1, 1, 0, 1];
-  let snark = run_chain(&pp, &preds, &ids, 5);
-  let z0 = z0();
+  let snark = run_chain(&pp, &prog, &ids, 5);
+  let z0 = z0_for(&prog, &app0(), &ids);
   let n = ids.len();
-  assert!(snark.verify(&pp, n, &z0, &ids).is_ok());
+  assert!(snark.verify(&pp, n, &z0).is_ok());
 
-  let wrong_z0 = vec![z0[0] + F::ONE, z0[1]];
+  let mut wrong_z0 = z0.clone();
+  wrong_z0[0] += F::ONE;
   expect_layer(
-    snark.verify(&pp, n, &wrong_z0, &ids),
+    snark.verify(&pp, n, &wrong_z0),
     IvcLayer::LinkHash,
     "wrong initial state",
   );
-  // skipped step: the same proof claimed for the schedule without step 2
-  let skipped = [0usize, 1, 0, 1];
+  // the same proof claimed for a program register that encodes swapped steps
+  let swapped = [0usize, 1, 0, 1, 1];
   expect_layer(
-    snark.verify(&pp, n - 1, &z0, &skipped),
+    snark.verify(&pp, n, &z0_for(&prog, &app0(), &swapped)),
+    IvcLayer::LinkHash,
+    "swapped steps (initial program)",
+  );
+  // skipped step and wrong counter
+  expect_layer(
+    snark.verify(&pp, n - 1, &z0),
     IvcLayer::LinkHash,
     "skipped step",
   );
-  // repeated / wrong counter: n − 1 and n + 1 with an otherwise valid-looking schedule
   expect_layer(
-    snark.verify(&pp, n + 1, &z0, &[0, 1, 1, 1, 0, 1]),
+    snark.verify(&pp, n + 1, &z0),
     IvcLayer::LinkHash,
     "wrong counter (n + 1)",
   );
-  // swapped steps 1 and 2 (ids 1 ↔ 0 at positions 2, 3)
-  let swapped = [0usize, 1, 0, 1, 1];
+  // expected schedules that disagree with the recovered trace
   expect_layer(
-    snark.verify(&pp, n, &z0, &swapped),
-    IvcLayer::LinkHash,
-    "swapped steps",
+    snark.verify_schedule(&pp, n, &z0, &swapped),
+    IvcLayer::Trace,
+    "swapped steps (expected schedule)",
   );
-  // wrong predicate choice at an inner step
-  let wrong = [1usize, 1, 1, 0, 1];
   expect_layer(
-    snark.verify(&pp, n, &z0, &wrong),
-    IvcLayer::LinkHash,
+    snark.verify_schedule(&pp, n, &z0, &[1, 1, 1, 0, 1]),
+    IvcLayer::Trace,
     "wrong predicate choice",
   );
-  // wrong predicate for the last step: the last instance belongs to another predicate
-  let wrong_last = [0usize, 1, 1, 0, 0];
   expect_layer(
-    snark.verify(&pp, n, &z0, &wrong_last),
-    IvcLayer::Input,
+    snark.verify_schedule(&pp, n, &z0, &[0, 1, 1, 0, 0]),
+    IvcLayer::Trace,
     "wrong last predicate",
+  );
+  expect_layer(
+    snark.verify_schedule(&pp, n, &z0, &ids[..n - 1]),
+    IvcLayer::Trace,
+    "schedule of another length",
   );
 }
 
 /// A tampered prover step in the middle of a chain is caught by the final check only: the
 /// in-circuit checks make that step's instance unsatisfied, the next step's in-circuit HFS
 /// verifier fails, and so on, up to the last incoming instance (or the CycleFold accumulator).
-fn tampered_chain(tamper: Tamper, at: usize, len: usize) -> IvcError {
-  let (pp, preds) = setup::<Direct>(2, PrimaryTemplate::R1cs);
+fn tampered_chain(
+  forced: Option<(usize, usize)>,
+  tamper: Tamper,
+  at: usize,
+  len: usize,
+) -> IvcError {
+  let (pp, prog) = setup::<Direct>(2, PrimaryTemplate::R1cs);
   let ids: Vec<usize> = (0..len).map(|i| i % 2).collect();
-  let z0 = z0();
-  let mut snark = Snark::<Direct>::new(&pp, &preds, &z0, ids[0]).unwrap();
-  for (n, &id) in ids.iter().enumerate().skip(1) {
+  let z0 = z0_for(&prog, &app0(), &ids);
+  let force = |n: usize| forced.and_then(|(s, k)| (s == n).then_some(k));
+  let mut snark = Snark::<Direct>::new_tampered(&pp, &prog, &z0, force(0)).unwrap();
+  for n in 1..len {
     let t = if n == at { tamper } else { Tamper::None };
-    snark.prove_step_tampered(&pp, &preds, id, t).unwrap();
+    snark.prove_step_tampered(&pp, &prog, force(n), t).unwrap();
   }
-  snark.verify(&pp, len, &z0, &ids).unwrap_err()
+  snark.verify(&pp, len, &z0).unwrap_err()
 }
 
 #[test]
 fn test_ivc_rejects_broken_state_link() {
   // at the last step: the last incoming instance's in-circuit hash check fails
-  let e = tampered_chain(Tamper::StateLink, 3, 4);
+  let e = tampered_chain(None, Tamper::StateLink, 3, 4);
   assert_eq!(e.layer(), IvcLayer::LastIncoming, "{e}");
   // in the middle: propagates through the next in-circuit HFS verifiers
-  let e = tampered_chain(Tamper::StateLink, 2, 4);
+  let e = tampered_chain(None, Tamper::StateLink, 2, 4);
   assert_eq!(e.layer(), IvcLayer::LastIncoming, "{e}");
 }
 
 #[test]
 fn test_ivc_rejects_repeated_counter() {
-  let e = tampered_chain(Tamper::Counter, 2, 4);
+  let e = tampered_chain(None, Tamper::Counter, 2, 4);
   assert!(
     matches!(e.layer(), IvcLayer::LastIncoming | IvcLayer::LinkHash),
     "{e}"
@@ -886,7 +1012,7 @@ fn test_ivc_rejects_repeated_counter() {
 #[test]
 fn test_ivc_rejects_wrong_incoming_predicate() {
   // folding the incoming instance as the other predicate: the in-circuit zero-check fails
-  let e = tampered_chain(Tamper::IncomingPredicate, 2, 4);
+  let e = tampered_chain(None, Tamper::IncomingPredicate, 2, 4);
   assert_eq!(e.layer(), IvcLayer::LastIncoming, "{e}");
 }
 
@@ -894,12 +1020,12 @@ fn test_ivc_rejects_wrong_incoming_predicate() {
 fn test_ivc_rejects_unbound_hint() {
   // the folded comm_W hint is not the CycleFold output: the CycleFold instance is unsatisfied
   // (and the link hash no longer matches the prover's own running instance)
-  let e = tampered_chain(Tamper::HintW, 3, 4);
+  let e = tampered_chain(None, Tamper::HintW, 3, 4);
   assert!(
     matches!(e.layer(), IvcLayer::CycleFold | IvcLayer::LinkHash),
     "{e}"
   );
-  let e = tampered_chain(Tamper::HintW, 2, 4);
+  let e = tampered_chain(None, Tamper::HintW, 2, 4);
   assert!(
     matches!(
       e.layer(),
@@ -911,38 +1037,189 @@ fn test_ivc_rejects_unbound_hint() {
 
 #[test]
 fn test_ivc_rejects_bad_cyclefold_witness() {
-  let e = tampered_chain(Tamper::CycleFoldWitness, 3, 4);
+  let e = tampered_chain(None, Tamper::CycleFoldWitness, 3, 4);
   assert_eq!(e.layer(), IvcLayer::CycleFold, "{e}");
+}
+
+/// P4 (G4): a host that runs a predicate φ did not select is rejected. The circuit of the
+/// forced predicate enforces `φ(i, z_i) = k`, so its instance is unsatisfied: at the last step
+/// the final CCS check fails (LastIncoming); at the base step or an inner step the next
+/// in-circuit HFS verifier fails and the failure propagates to the last instance.
+#[test]
+fn test_p4_rejects_schedule_disagreeing_with_phi() {
+  // the program runs [0, 1, 0, 1]; the host forces predicate 0 at step 3 (φ selects 1)
+  let e = tampered_chain(Some((3, 0)), Tamper::None, usize::MAX, 4);
+  assert_eq!(e.layer(), IvcLayer::LastIncoming, "last step: {e}");
+  // inner step 1 (φ selects 1, the host runs 0)
+  let e = tampered_chain(Some((1, 0)), Tamper::None, usize::MAX, 4);
+  assert_eq!(e.layer(), IvcLayer::LastIncoming, "inner step: {e}");
+  // base step (φ(0, z0) = 0, the host runs 1)
+  let e = tampered_chain(Some((0, 1)), Tamper::None, usize::MAX, 3);
+  assert_eq!(e.layer(), IvcLayer::LastIncoming, "base step: {e}");
+}
+
+/// P4 (G3): forged ids in the proof. A different trace hash → LinkHash; the last instance
+/// relabelled as another member → LastIncoming (that member's circuit, with its φ check, is
+/// not satisfied by the witness); an id outside the family → Input.
+#[test]
+fn test_p4_rejects_forged_ids() {
+  let (pp, prog) = setup::<Direct>(4, PrimaryTemplate::R1cs);
+  let ids = [0usize, 3, 2, 1, 3];
+  let snark = run_chain(&pp, &prog, &ids, 5);
+  let z0 = z0_for(&prog, &app0(), &ids);
+
+  let mut s = snark.clone();
+  *s.forge().0 = pp.trace_of(&[0, 3, 2, 1, 2]);
+  expect_layer(s.verify(&pp, 5, &z0), IvcLayer::LinkHash, "forged trace");
+  let mut s = snark.clone();
+  *s.forge().1 = 2;
+  expect_layer(
+    s.verify(&pp, 5, &z0),
+    IvcLayer::LastIncoming,
+    "relabelled last id",
+  );
+  let mut s = snark.clone();
+  *s.forge().1 = 4;
+  expect_layer(
+    s.verify(&pp, 5, &z0),
+    IvcLayer::Input,
+    "id outside the family",
+  );
+  // the stable ids of the family resolve the recovered positions
+  assert_eq!(pp.family().ids()[3], "chain/m3");
+  assert_eq!(pp.family().position("chain/m2"), Some(2));
+}
+
+/// P4: a reordered family and a substituted matrix change the family digest; setup with the
+/// pinned digest rejects them (Setup), and a proof made under them is rejected by the original
+/// parameters (LinkHash: the link hash binds pp_digest and the family digest).
+#[test]
+fn test_p4_rejects_reordered_and_substituted_family() {
+  let (pp, prog) = setup::<Direct>(2, PrimaryTemplate::R1cs);
+  let d = pp.family().digest();
+  let ids = [1usize, 0];
+  let z0 = z0_for(&prog, &app0(), &ids);
+  assert!(run_chain(&pp, &prog, &ids, 2).verify(&pp, 2, &z0).is_ok());
+
+  let reordered = ChainPredicates::<F>::reordered(2, vec![1, 0]).program();
+  expect_layer(
+    Pp::<Direct>::setup_pinned(&reordered, PrimaryTemplate::R1cs, d),
+    IvcLayer::Setup,
+    "reordered family (pinned digest)",
+  );
+  let substituted = ChainPredicates::<F>::substituted(2, 1).program();
+  for (what, other) in [("reordered", reordered), ("substituted", substituted)] {
+    let pp_o = setup_prog::<Direct>(&other, PrimaryTemplate::R1cs);
+    assert_ne!(pp_o.family().digest(), d, "{what}: digest");
+    assert_ne!(pp_o.digest(), pp.digest(), "{what}: pp digest");
+    // the same member ids, in another order or with a substituted matrix
+    let mut sorted = pp_o.family().ids().to_vec();
+    sorted.sort();
+    assert_eq!(sorted, pp.family().ids());
+    let mut s = Snark::<Direct>::new(&pp_o, &other, &z0).unwrap();
+    s.prove_step(&pp_o, &other).unwrap();
+    s.verify(&pp_o, 2, &z0).unwrap();
+    expect_layer(s.verify(&pp, 2, &z0), IvcLayer::LinkHash, what);
+  }
+}
+
+/// P4: a tampered running span. Span: the public λ is hashed into the link hash (LinkHash);
+/// the witness λ alone fails the decider (SpanIndex).
+#[test]
+fn test_p4_rejects_tampered_span() {
+  let (pp, prog) = setup::<Span>(2, PrimaryTemplate::R1cs);
+  let ids = [0usize, 1, 1];
+  let snark = run_chain(&pp, &prog, &ids, 3);
+  let z0 = z0_for(&prog, &app0(), &ids);
+  // λ is dense after the folds (not one-hot)
+  assert!(snark
+    .running()
+    .1
+    .lambda
+    .iter()
+    .all(|l| !bool::from(l.is_zero())));
+
+  let mut s = snark.clone();
+  s.running_mut().0.index[1] += F::ONE;
+  expect_layer(s.verify(&pp, 3, &z0), IvcLayer::LinkHash, "public span");
+  let mut s = snark.clone();
+  s.running_mut().1.lambda[1] += F::ONE;
+  expect_layer(s.verify(&pp, 3, &z0), IvcLayer::Decider, "witness span");
+  let mut s = snark.clone();
+  s.running_mut().0.index[0] += F::ONE;
+  s.running_mut().1.lambda[0] += F::ONE;
+  expect_layer(
+    s.verify(&pp, 3, &z0),
+    IvcLayer::LinkHash,
+    "public and witness span",
+  );
+}
+
+/// P4: a non-one-hot incoming selector. The in-circuit one-hot decomposition of k_prev rejects
+/// forged bit assignments (two hot bits, none, or bits that do not sum to k), and the CycleFold
+/// circuit rejects an index update with a non-unit vector (ι_0 + ι_1 for k = 0).
+#[test]
+fn test_p4_one_hot_gadget_rejects_forged_bits() {
+  let case = |k: u64, bits: Option<&[bool]>| {
+    let mut cs = TestConstraintSystem::<F>::new();
+    let kv = AllocatedNum::alloc(cs.namespace(|| "k"), || Ok(F::from(k))).unwrap();
+    one_hot_with(cs.namespace(|| "oh"), &kv, 4, bits).unwrap();
+    cs.is_satisfied()
+  };
+  assert!(case(1, None));
+  assert!(case(1, Some(&[false, true, false, false])));
+  assert!(!case(1, Some(&[true, true, false, false])), "two hot bits");
+  assert!(!case(0, Some(&[false, false, false, false])), "no hot bit");
+  assert!(
+    !case(2, Some(&[false, true, false, false])),
+    "bit does not match k"
+  );
+  assert!(!case(4, None), "k outside the family");
+}
+
+#[test]
+fn test_p4_cyclefold_rejects_non_unit_iota() {
+  let mut rng = ChaCha20Rng::seed_from_u64(57);
+  let iota = iota_coords(4, 3);
+  let v = cf_inputs(&mut rng, &iota, 3, 0, false);
+  assert!(cf_satisfied(&iota, 3, v.clone()));
+  let pp = HfsParams::<E1>::new(
+    CcsTemplate::new(3, vec![vec![0]], vec![F::ONE]).unwrap(),
+    vec![CcsShape::new(1, 1, 1, vec![Vec::new(); 3]).unwrap(); 4],
+  )
+  .unwrap();
+  let mut bad = v.clone();
+  for j in 0..3 {
+    let run = pp.iota(0)[j]; // any point; rebuild M_out = M_run + ρ(ι_0 + ι_1)
+    let out = run + (pp.iota(0)[j] + pp.iota(1)[j]) * v.rho;
+    bad.m[j] = (run.to_coordinates(), out.to_coordinates());
+  }
+  assert!(
+    !cf_satisfied(&iota, 3, bad),
+    "non-unit index vector accepted"
+  );
 }
 
 /// Tampering with the final accumulators directly.
 #[test]
 fn test_ivc_rejects_tampered_accumulators() {
-  let (pp, preds) = setup::<Direct>(2, PrimaryTemplate::R1cs);
+  let (pp, prog) = setup::<Direct>(2, PrimaryTemplate::R1cs);
   let ids = [0usize, 1, 0];
-  let snark = run_chain(&pp, &preds, &ids, 3);
-  let z0 = z0();
+  let snark = run_chain(&pp, &prog, &ids, 3);
+  let z0 = z0_for(&prog, &app0(), &ids);
 
   let mut s = snark.clone();
   s.running_mut().1.w[0] += F::ONE;
-  expect_layer(
-    s.verify(&pp, 3, &z0, &ids),
-    IvcLayer::Decider,
-    "running witness",
-  );
+  expect_layer(s.verify(&pp, 3, &z0), IvcLayer::Decider, "running witness");
 
   let mut s = snark.clone();
   s.running_mut().1.lambda[0] += F::ONE;
-  expect_layer(
-    s.verify(&pp, 3, &z0, &ids),
-    IvcLayer::Decider,
-    "running lambda",
-  );
+  expect_layer(s.verify(&pp, 3, &z0), IvcLayer::Decider, "running lambda");
 
   let mut s = snark.clone();
   s.running_mut().3.W[0] += <E2 as Engine>::Scalar::ONE;
   expect_layer(
-    s.verify(&pp, 3, &z0, &ids),
+    s.verify(&pp, 3, &z0),
     IvcLayer::CycleFold,
     "CycleFold witness",
   );
@@ -950,9 +1227,17 @@ fn test_ivc_rejects_tampered_accumulators() {
   let mut s = snark.clone();
   s.running_mut().0.v[0] += F::ONE;
   expect_layer(
-    s.verify(&pp, 3, &z0, &ids),
+    s.verify(&pp, 3, &z0),
     IvcLayer::LinkHash,
     "running instance (hash-bound)",
+  );
+
+  let mut s = snark.clone();
+  s.running_mut().0.index[0] = s.running_mut().0.index[1];
+  expect_layer(
+    s.verify(&pp, 3, &z0),
+    IvcLayer::LinkHash,
+    "running comm_M (hash-bound)",
   );
 }
 
@@ -968,13 +1253,13 @@ fn test_constraint_breakdown() {
   for k in [2usize, 4] {
     for direct in [true, false] {
       let (rows, cf) = if direct {
-        let (pp, preds) = setup::<Direct>(k, PrimaryTemplate::R1cs);
+        let (pp, prog) = setup::<Direct>(k, PrimaryTemplate::R1cs);
         assert!(super::ck_covers_padded(&pp));
-        (breakdown_rows(&pp, &preds), pp.cyclefold_shape().num_cons)
+        (breakdown_rows(&pp, &prog), pp.cyclefold_shape().num_cons)
       } else {
-        let (pp, preds) = setup::<Span>(k, PrimaryTemplate::R1cs);
+        let (pp, prog) = setup::<Span>(k, PrimaryTemplate::R1cs);
         assert!(super::ck_covers_padded(&pp));
-        (breakdown_rows(&pp, &preds), pp.cyclefold_shape().num_cons)
+        (breakdown_rows(&pp, &prog), pp.cyclefold_shape().num_cons)
       };
       println!(
         "[breakdown] K={k} {}: {rows:?}; CycleFold padded rows {cf}",
@@ -984,14 +1269,11 @@ fn test_constraint_breakdown() {
   }
 }
 
-fn breakdown_rows<V: IvcVariant<E1>>(
-  pp: &Pp<V>,
-  preds: &ChainPredicates<F>,
-) -> Vec<(String, usize)> {
+fn breakdown_rows<V: IvcVariant<E1>>(pp: &Pp<V>, prog: &Prog) -> Vec<(String, usize)> {
   let mut out = Vec::new();
-  for id in 0..preds.num_predicates() {
-    let b = primary_breakdown(pp, preds, id).unwrap();
-    let c = primary_constraint_counts(pp, preds, id).unwrap();
+  for id in 0..prog.num_predicates() {
+    let b = primary_breakdown(pp, prog, id).unwrap();
+    let c = primary_constraint_counts(pp, prog, id).unwrap();
     assert_eq!(
       b.total, c.num_constraints,
       "breakdown total = CountingCS total"
@@ -1015,12 +1297,12 @@ fn breakdown_rows<V: IvcVariant<E1>>(
 /// families with the same dimensions but different wiring give the same primary size.
 #[test]
 fn test_primary_circuit_is_succinct() {
-  let (pp2, preds2) = setup::<Direct>(2, PrimaryTemplate::R1cs);
-  let a = primary_constraint_counts(&pp2, &preds2, 0).unwrap();
-  let b = primary_constraint_counts(&pp2, &preds2, 1).unwrap();
+  let (pp2, prog2) = setup::<Direct>(2, PrimaryTemplate::R1cs);
+  let a = primary_constraint_counts(&pp2, &prog2, 0).unwrap();
+  let b = primary_constraint_counts(&pp2, &prog2, 1).unwrap();
   // the two members differ only in the application part
-  let ba = primary_breakdown(&pp2, &preds2, 0).unwrap();
-  let bb = primary_breakdown(&pp2, &preds2, 1).unwrap();
+  let ba = primary_breakdown(&pp2, &prog2, 0).unwrap();
+  let bb = primary_breakdown(&pp2, &prog2, 1).unwrap();
   assert_eq!(
     a.num_constraints - ba.by_category["application"],
     b.num_constraints - bb.by_category["application"]

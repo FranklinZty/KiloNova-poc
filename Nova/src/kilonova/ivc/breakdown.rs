@@ -4,10 +4,9 @@
 //! enforced, so the components are disjoint and sum to the total. [`category`] maps a path
 //! (top-level namespace of `circuit.rs` and, inside the HFS gadget, the second level) to a
 //! component.
-use super::{circuit::PrimaryCircuit, IvcError, IvcVariant, PublicParams};
+use super::{circuit::PrimaryCircuit, IvcError, IvcVariant, PredicateProgram, PublicParams};
 use crate::{
   frontend::{ConstraintSystem, Index, LinearCombination, SynthesisError, Variable},
-  kilonova::PredicateSet,
   traits::Engine,
 };
 use ff::PrimeField;
@@ -15,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, marker::PhantomData};
 
 /// Components reported (disjoint).
-pub const CATEGORIES: [&str; 9] = [
+pub const CATEGORIES: [&str; 10] = [
   "application",
+  "selection",
   "hfs_sumcheck",
   "hfs_transcript",
   "hfs_claims",
@@ -33,6 +33,7 @@ pub fn category(path: &[String]) -> &'static str {
   let second = path.get(1).map(String::as_str).unwrap_or("");
   match top {
     "F" => "application",
+    "phi" | "phi selects k" => "selection",
     "hfs" => {
       if second.starts_with("sc_x") || second.starts_with("sc_y") {
         "hfs_sumcheck"
@@ -175,7 +176,7 @@ pub fn primary_breakdown<E1, E2, PS, V>(
 where
   E1: Engine<Base = <E2 as Engine>::Scalar>,
   E2: Engine<Base = <E1 as Engine>::Scalar>,
-  PS: PredicateSet<E1::Scalar>,
+  PS: PredicateProgram<E1::Scalar>,
   V: IvcVariant<E1>,
 {
   let mut cs = BreakdownCS::<E1::Scalar>::default();

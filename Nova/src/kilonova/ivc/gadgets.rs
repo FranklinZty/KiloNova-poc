@@ -176,15 +176,29 @@ where
 /// One-hot decomposition of `k ∈ [0, n)`: bits `b_i = [k = i]` with `Σ b_i = 1` and
 /// `Σ i·b_i = k`. This also range-checks `k`.
 pub(crate) fn one_hot<F: PrimeField, CS: ConstraintSystem<F>>(
+  cs: CS,
+  k: &AllocatedNum<F>,
+  n: usize,
+) -> Result<Vec<AllocatedBit>, SynthesisError> {
+  one_hot_with(cs, k, n, None)
+}
+
+/// [`one_hot`] with prover-chosen bit values (`forged`, test hook for the P4 non-one-hot
+/// rejection test; the bits are witness values, so any prover can choose them).
+pub(crate) fn one_hot_with<F: PrimeField, CS: ConstraintSystem<F>>(
   mut cs: CS,
   k: &AllocatedNum<F>,
   n: usize,
+  forged: Option<&[bool]>,
 ) -> Result<Vec<AllocatedBit>, SynthesisError> {
   let bits = (0..n)
     .map(|i| {
       AllocatedBit::alloc(
         cs.namespace(|| format!("b{i}")),
-        k.get_value().map(|v| v == F::from(i as u64)),
+        match forged {
+          Some(f) => Some(f[i]),
+          None => k.get_value().map(|v| v == F::from(i as u64)),
+        },
       )
     })
     .collect::<Result<Vec<_>, _>>()?;

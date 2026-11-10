@@ -12,11 +12,15 @@
 //!   accumulators (link hash, HFS decider, CycleFold relaxed R1CS, last incoming instance), so
 //!   every earlier step is authenticated through the recursion alone.
 //!
-//! Minimal P4 scope inside P5 (`docs/P5-plan.md` §3): the schedule is bound by an in-circuit
-//! Poseidon chain `trace_{i+1} = H(TAG_TRACE, trace_i, k)` where k is a constant of predicate
-//! k's circuit, and the family digest (`hfs_digest`) and the parameter digest (`pp_digest`)
-//! enter every link hash. The verifier still receives the schedule (G3 open) and there is no
-//! in-circuit φ (the claim is "this specific trace").
+//! P4 (`docs/P4-plan.md`, IVC version 2): the predicates form an authenticated
+//! [`PredicateFamily`](crate::kilonova::family::PredicateFamily) (stable ids, canonical matrix
+//! encoding, selector descriptor) whose digest is the HFS transcript digest and enters
+//! `pp_digest` and every link hash. Each circuit evaluates the program's selection function φ
+//! ([`program::PredicateProgram`]) on its input state and enforces `φ(i, z_i) = k` (G4), and
+//! extends the in-circuit Poseidon trace chain `trace_{i+1} = H(TAG_TRACE, trace_i, k)` with its
+//! constant k. [`RecursiveSNARK::verify`] takes no schedule: it recovers the trace hash from the
+//! proof through the final link hash and returns it (G3); [`RecursiveSNARK::verify_schedule`]
+//! compares it with an expected schedule.
 use crate::{
   constants::NUM_HASH_BITS,
   digest::{DigestComputer, SimpleDigestible},
@@ -25,13 +29,14 @@ use crate::{
   gadgets::utils::{scalar_as_base, to_bignat_repr},
   kilonova::{
     count_constraints,
+    family::{FamilyMeta, PredicateFamily},
     hfs::{
       decide, num_vars, CcsShape, Direct, HfsError, HfsParams, HfsProof, IncomingInstance, Layer,
       RunningInstance, RunningWitness, Span, Variant, NIFS,
     },
     shape_cs_to_shape,
     transcript::v2::absorb_commitment,
-    CountingSummary, PredicateSet, MAX_SETUP_CONSTRAINTS, MAX_SETUP_ITERATIONS,
+    CountingSummary, MAX_SETUP_CONSTRAINTS, MAX_SETUP_ITERATIONS,
   },
   r1cs::{R1CSShape, RelaxedR1CSInstance, RelaxedR1CSWitness},
   traits::{
@@ -50,6 +55,7 @@ pub(crate) mod circuit;
 pub mod cyclefold;
 pub mod fixtures;
 pub(crate) mod gadgets;
+pub mod program;
 pub mod shape;
 #[cfg(test)]
 mod tests;
@@ -58,15 +64,17 @@ use circuit::{PrimaryCircuit, PrimaryInputs, PrimaryParams};
 use cyclefold::{
   cf_fold_prove, cyclefold_instance_witness, num_inputs, Coords, CycleFoldCircuit, CycleFoldInputs,
 };
+pub use program::{PredicateProgram, Scheduled};
 use shape::{ccs_is_satisfied, KnShapeCS};
 pub use shape::{enforce_pow5, PrimaryTemplate, KN_NATIVE_POW5};
 
-/// Version of the recursive layer (link hash, trace chain, CycleFold layout).
-pub const IVC_VERSION: u64 = 1;
-/// Tag of the link hash: "KNIVC" ‖ v1 ‖ 1.
-pub const TAG_LINK: u64 = 0x4b4e_4956_4301_0001;
-/// Tag of the trace chain.
-pub const TAG_TRACE: u64 = 0x4b4e_4956_4301_0002;
+/// Version of the recursive layer (link hash, trace chain, CycleFold layout). Version 2 (P4):
+/// the link hash's digest slot carries the family digest, and every circuit enforces φ.
+pub const IVC_VERSION: u64 = 2;
+/// Tag of the link hash: "KNIVC" ‖ v2 ‖ 1.
+pub const TAG_LINK: u64 = 0x4b4e_4956_4302_0001;
+/// Tag of the trace chain: "KNIVC" ‖ v2 ‖ 2.
+pub const TAG_TRACE: u64 = 0x4b4e_4956_4302_0002;
 /// Label of the CycleFold commitment key.
 pub const CF_CK_LABEL: &[u8] = b"kn-ivc-cf-ck";
 
@@ -130,8 +138,10 @@ pub enum IvcLayer {
   Decider,
   /// CycleFold accumulator: relaxed R1CS satisfaction and commitment openings.
   CycleFold,
-  /// Last incoming CCCS: CCS satisfaction of predicate `ids[n−1]` and comm_W opening.
+  /// Last incoming CCCS: CCS satisfaction of its predicate and comm_W opening.
   LastIncoming,
+  /// The recovered trace differs from an expected schedule (`verify_schedule` only).
+  Trace,
 }
 
 /// Errors of the recursive layer. [`IvcError::layer`] names the detection layer.
@@ -158,6 +168,9 @@ pub enum IvcError {
   /// The last incoming instance is not satisfied.
   #[error("last incoming instance: {0}")]
   LastIncoming(String),
+  /// The recovered trace is not the expected schedule's.
+  #[error("trace: {0}")]
+  Trace(String),
 }
 
 impl IvcError {
@@ -171,6 +184,7 @@ impl IvcError {
       IvcError::Decider(_) => IvcLayer::Decider,
       IvcError::CycleFold(_) => IvcLayer::CycleFold,
       IvcError::LastIncoming(_) => IvcLayer::LastIncoming,
+      IvcError::Trace(_) => IvcLayer::Trace,
     }
   }
 }
@@ -246,7 +260,7 @@ struct PpDigestView<'a> {
   template: PrimaryTemplate,
   arity: usize,
   k: usize,
-  hfs_digest: String,
+  family_digest: String,
   cf_shape_digest: String,
   cf_ck_label: &'a [u8],
   cf_ck_len: usize,
@@ -269,6 +283,7 @@ where
   ro_consts_cf: ROConstants<E2>,
   primary: PrimaryParams<E1, E2>,
   iota: Vec<Vec<Coords<E1::Base>>>,
+  family: FamilyMeta<E1::Scalar>,
   pp_digest: E1::Scalar,
   _p: PhantomData<V>,
 }
@@ -280,11 +295,30 @@ where
   V: IvcVariant<E1>,
 {
   /// Builds the parameters: CycleFold shape, the primary fixed point on the sum-check sizes,
-  /// the padded family and the keys. Fails (never raises a cap) if the fixed point does not
-  /// converge within `MAX_SETUP_ITERATIONS` or a circuit exceeds `MAX_SETUP_CONSTRAINTS`.
-  pub fn setup<PS: PredicateSet<E1::Scalar>>(
+  /// the padded [`PredicateFamily`] (stable ids, selector, digest) and the keys. Fails (never
+  /// raises a cap) if the fixed point does not converge within `MAX_SETUP_ITERATIONS` or a
+  /// circuit exceeds `MAX_SETUP_CONSTRAINTS`.
+  pub fn setup<PS: PredicateProgram<E1::Scalar>>(
     predicates: &PS,
     tpl: PrimaryTemplate,
+  ) -> Result<(Self, IvcSetupReport), IvcError> {
+    Self::setup_impl(predicates, tpl, None)
+  }
+
+  /// [`Self::setup`] for a pinned family: rejects (layer Setup) unless the family digest is
+  /// `expected` (a reordered member or a substituted matrix changes it).
+  pub fn setup_pinned<PS: PredicateProgram<E1::Scalar>>(
+    predicates: &PS,
+    tpl: PrimaryTemplate,
+    expected: E1::Scalar,
+  ) -> Result<(Self, IvcSetupReport), IvcError> {
+    Self::setup_impl(predicates, tpl, Some(expected))
+  }
+
+  fn setup_impl<PS: PredicateProgram<E1::Scalar>>(
+    predicates: &PS,
+    tpl: PrimaryTemplate,
+    expected: Option<E1::Scalar>,
   ) -> Result<(Self, IvcSetupReport), IvcError> {
     let k = predicates.num_predicates();
     let arity = predicates.arity();
@@ -395,7 +429,22 @@ where
       .iter()
       .map(|cs| cs.to_ccs(tpl, m, num_w))
       .collect::<Result<Vec<_>, _>>()?;
-    let hfs = HfsParams::<E1>::new(template, shapes)?;
+    let family = PredicateFamily::new(
+      predicates.family_label(),
+      (0..k).map(|i| predicates.member_id(i)).collect(),
+      arity,
+      predicates.selector_descriptor(),
+      template,
+      shapes,
+    )
+    .map_err(|e| IvcError::Setup(format!("family: {e}")))?;
+    if let Some(d) = expected {
+      family
+        .meta()
+        .check_digest(d)
+        .map_err(|e| IvcError::Setup(format!("{e}")))?;
+    }
+    let (hfs, family) = family.into_hfs_params::<E1>()?;
     if (hfs.s(), hfs.s_prime()) != (primary.s, primary.s_prime) {
       return Err(IvcError::Setup(
         "HFS dimensions differ from the fixed point".into(),
@@ -408,14 +457,15 @@ where
       }
     }
 
-    let hfs_digest = hfs.digest();
+    // the HFS transcript digest is the family digest (`HfsParams` built from the family)
+    debug_assert_eq!(hfs.digest(), family.digest());
     let view = PpDigestView {
       version: IVC_VERSION,
       variant: V::NAME,
       template: tpl,
       arity,
       k,
-      hfs_digest: format!("{hfs_digest:?}"),
+      family_digest: format!("{:?}", family.digest()),
       cf_shape_digest: format!("{:?}", cf_shape.digest()),
       cf_ck_label: CF_CK_LABEL,
       cf_ck_len: cf_shape.num_cons.max(cf_shape.num_vars),
@@ -450,11 +500,17 @@ where
         ro_consts_cf: ROConstants::<E2>::default(),
         primary,
         iota,
+        family,
         pp_digest,
         _p: PhantomData,
       },
       report,
     ))
+  }
+
+  /// The authenticated family (stable ids, member digests, family digest).
+  pub fn family(&self) -> &FamilyMeta<E1::Scalar> {
+    &self.family
   }
 
   /// Digest of all public parameters (bound by every link hash).
@@ -589,7 +645,7 @@ where
   /// Synthesizes predicate `k`'s circuit on `inputs`; returns the new incoming instance, its
   /// witness (padded) and `z_{i+1}`.
   #[allow(clippy::type_complexity)]
-  fn synthesize_step<PS: PredicateSet<E1::Scalar>>(
+  fn synthesize_step<PS: PredicateProgram<E1::Scalar>>(
     &self,
     predicates: &PS,
     k: usize,
@@ -629,7 +685,7 @@ fn count_primary<E1, E2, PS, V>(
 where
   E1: Engine<Base = <E2 as Engine>::Scalar>,
   E2: Engine<Base = <E1 as Engine>::Scalar>,
-  PS: PredicateSet<E1::Scalar>,
+  PS: PredicateProgram<E1::Scalar>,
   V: IvcVariant<E1>,
 {
   Ok(count_constraints::<E1::Scalar, _>(|cs| {
@@ -661,6 +717,18 @@ pub enum Tamper {
   CycleFoldWitness,
 }
 
+/// What [`RecursiveSNARK::verify`] establishes about a chain of n steps from `z_0`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChainOutput<F> {
+  /// The final state `z_n`.
+  pub zn: Vec<F>,
+  /// The trace hash `H_trace*(k_0, …, k_{n−1})` of the ids the circuits executed (each
+  /// `k_i = φ(i, z_i)`, enforced in-circuit), recovered from the proof.
+  pub trace: F,
+  /// The predicate of the last step.
+  pub last_id: usize,
+}
+
 /// The non-uniform recursive SNARK (uncompressed; `verify` needs the final witnesses, G2).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -688,14 +756,38 @@ where
   E2: Engine<Base = <E1 as Engine>::Scalar>,
   V: IvcVariant<E1>,
 {
-  /// Base step: applies predicate `k0` to `z0`.
-  pub fn new<PS: PredicateSet<E1::Scalar>>(
+  /// Base step: applies the predicate `k0 = φ(0, z0)` selected by the program to `z0`.
+  pub fn new<PS: PredicateProgram<E1::Scalar>>(
     pp: &PublicParams<E1, E2, V>,
     predicates: &PS,
     z0: &[E1::Scalar],
-    k0: usize,
   ) -> Result<Self, IvcError> {
-    if k0 >= pp.hfs.k() || z0.len() != pp.arity {
+    Self::new_tampered(pp, predicates, z0, None)
+  }
+
+  /// [`Self::new`] with a host-forced predicate (`Some(k0)`, test hook: a choice that disagrees
+  /// with φ makes the circuit unsatisfied). `None` is the honest prover.
+  #[doc(hidden)]
+  pub fn new_tampered<PS: PredicateProgram<E1::Scalar>>(
+    pp: &PublicParams<E1, E2, V>,
+    predicates: &PS,
+    z0: &[E1::Scalar],
+    forced: Option<usize>,
+  ) -> Result<Self, IvcError> {
+    if z0.len() != pp.arity {
+      return Err(IvcError::Input(format!(
+        "|z0| = {} (arity {})",
+        z0.len(),
+        pp.arity
+      )));
+    }
+    let k0 = match forced {
+      Some(k) => k,
+      None => predicates
+        .select(0, z0)
+        .ok_or_else(|| IvcError::Input("φ(0, z0) selects no predicate".into()))?,
+    };
+    if k0 >= pp.hfs.k() {
       return Err(IvcError::Input(format!(
         "predicate {k0} (K = {}) or |z0| = {} (arity {})",
         pp.hfs.k(),
@@ -742,25 +834,36 @@ where
     })
   }
 
-  /// Applies predicate `k` to the current state.
-  pub fn prove_step<PS: PredicateSet<E1::Scalar>>(
+  /// Applies the predicate `k = φ(i, z_i)` selected by the program to the current state.
+  pub fn prove_step<PS: PredicateProgram<E1::Scalar>>(
     &mut self,
     pp: &PublicParams<E1, E2, V>,
     predicates: &PS,
-    k: usize,
   ) -> Result<(), IvcError> {
-    self.prove_step_tampered(pp, predicates, k, Tamper::None)
+    self.prove_step_tampered(pp, predicates, None, Tamper::None)
   }
 
-  /// [`Self::prove_step`] with a test hook (`Tamper::None` is the honest prover).
+  /// The predicate φ selects for the next step (`None`: the program has halted).
+  pub fn next_predicate<PS: PredicateProgram<E1::Scalar>>(&self, predicates: &PS) -> Option<usize> {
+    predicates.select(self.i, &self.zi)
+  }
+
+  /// [`Self::prove_step`] with test hooks: `forced = Some(k)` makes the host choose predicate k
+  /// regardless of φ, and `tamper` makes the prover deviate (`None`/`Tamper::None` is honest).
   #[doc(hidden)]
-  pub fn prove_step_tampered<PS: PredicateSet<E1::Scalar>>(
+  pub fn prove_step_tampered<PS: PredicateProgram<E1::Scalar>>(
     &mut self,
     pp: &PublicParams<E1, E2, V>,
     predicates: &PS,
-    k: usize,
+    forced: Option<usize>,
     tamper: Tamper,
   ) -> Result<(), IvcError> {
+    let k = match forced {
+      Some(k) => k,
+      None => self.next_predicate(predicates).ok_or_else(|| {
+        IvcError::Input(format!("φ({}, z_{}) selects no predicate", self.i, self.i))
+      })?,
+    };
     if k >= pp.hfs.k() {
       return Err(IvcError::Input(format!(
         "predicate {k} out of range (K = {})",
@@ -868,40 +971,32 @@ where
     Ok(())
   }
 
-  /// Verifies a chain of `num_steps` steps from `z0` with schedule `ids` and returns `z_n`.
-  /// Only final accumulators are checked; the chain is authenticated by the recursion.
+  /// Verifies a chain of `num_steps` steps from `z0`. The verifier takes **no schedule**: the
+  /// schedule is fixed by the program's φ inside the circuits, and the trace hash is recovered
+  /// from the proof (bound by the final link hash) and returned with `z_n` and the last
+  /// predicate. Only final accumulators are checked; the chain is authenticated by the recursion.
   pub fn verify(
     &self,
     pp: &PublicParams<E1, E2, V>,
     num_steps: usize,
     z0: &[E1::Scalar],
-    ids: &[usize],
-  ) -> Result<Vec<E1::Scalar>, IvcError> {
-    if num_steps == 0 || ids.len() != num_steps {
+  ) -> Result<ChainOutput<E1::Scalar>, IvcError> {
+    if num_steps == 0 || z0.len() != pp.arity {
       return Err(IvcError::Input(format!(
-        "{num_steps} steps with a schedule of length {}",
-        ids.len()
+        "{num_steps} steps, |z0| = {} (arity {})",
+        z0.len(),
+        pp.arity
       )));
     }
-    if ids.iter().any(|&k| k >= pp.hfs.k()) || z0.len() != pp.arity {
-      return Err(IvcError::Input("predicate id or |z0| out of range".into()));
-    }
-    let last = ids[num_steps - 1];
-    if self.l_u.k != last || self.l_u.io.len() != 1 {
+    let last = self.l_u.k;
+    if last >= pp.hfs.k() || self.l_u.io.len() != 1 {
       return Err(IvcError::Input(format!(
-        "the last instance is of predicate {}, the schedule ends with {last}",
-        self.l_u.k
+        "the last instance claims predicate {last} (K = {})",
+        pp.hfs.k()
       )));
     }
-    // 1. Link hash.
-    let h = pp.link_hash(
-      num_steps,
-      z0,
-      &self.zi,
-      pp.trace_of(ids),
-      &self.r_u,
-      &self.cf_u,
-    );
+    // 1. Link hash (binds n, z_0, z_n, the trace hash and the accumulators).
+    let h = pp.link_hash(num_steps, z0, &self.zi, self.trace, &self.r_u, &self.cf_u);
     if self.l_u.io[0] != h {
       return Err(IvcError::LinkHash);
     }
@@ -928,7 +1023,36 @@ where
         "not satisfied for predicate {last}"
       )));
     }
-    Ok(self.zi.clone())
+    Ok(ChainOutput {
+      zn: self.zi.clone(),
+      trace: self.trace,
+      last_id: last,
+    })
+  }
+
+  /// [`Self::verify`], then compares the recovered trace with an expected schedule (layer
+  /// Trace). The schedule is only a check on the recovered digest, never an input to it.
+  pub fn verify_schedule(
+    &self,
+    pp: &PublicParams<E1, E2, V>,
+    num_steps: usize,
+    z0: &[E1::Scalar],
+    expected: &[usize],
+  ) -> Result<ChainOutput<E1::Scalar>, IvcError> {
+    let out = self.verify(pp, num_steps, z0)?;
+    if expected.len() != num_steps || pp.trace_of(expected) != out.trace {
+      return Err(IvcError::Trace(format!(
+        "the proven trace is not the expected schedule of length {}",
+        expected.len()
+      )));
+    }
+    Ok(out)
+  }
+
+  /// Test access to the trace hash and the last instance's predicate (forged-id tests).
+  #[doc(hidden)]
+  pub fn forge(&mut self) -> (&mut E1::Scalar, &mut usize) {
+    (&mut self.trace, &mut self.l_u.k)
   }
 
   /// Number of steps proven.
@@ -976,7 +1100,7 @@ pub fn primary_constraint_counts<E1, E2, PS, V>(
 where
   E1: Engine<Base = <E2 as Engine>::Scalar>,
   E2: Engine<Base = <E1 as Engine>::Scalar>,
-  PS: PredicateSet<E1::Scalar>,
+  PS: PredicateProgram<E1::Scalar>,
   V: IvcVariant<E1>,
 {
   count_primary::<E1, E2, PS, V>(&pp.primary, predicates, id)

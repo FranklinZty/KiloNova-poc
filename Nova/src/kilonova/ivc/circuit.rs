@@ -22,7 +22,7 @@ use super::{
     AllocIndex, AllocProof, AllocRunning, AllocatedRelaxedR1CSInstanceN, Expr, HfsGadgetParams,
     NnPoint,
   },
-  IvcVariant, TAG_LINK, TAG_TRACE,
+  IvcVariant, PredicateProgram, TAG_LINK, TAG_TRACE,
 };
 use crate::{
   constants::NUM_HASH_BITS,
@@ -31,10 +31,7 @@ use crate::{
     ecc::AllocatedPoint,
     utils::{alloc_num_equals, alloc_zero, conditionally_select, le_bits_to_num},
   },
-  kilonova::{
-    hfs::{CcsTemplate, HfsProof, IncomingInstance, RunningInstance},
-    PredicateSet,
-  },
+  kilonova::hfs::{CcsTemplate, HfsProof, IncomingInstance, RunningInstance},
   r1cs::RelaxedR1CSInstance,
   traits::{
     commitment::CommitmentTrait, Engine, RO2ConstantsCircuit, ROCircuitTrait, ROConstantsCircuit,
@@ -125,7 +122,7 @@ impl<E1, E2, PS, V> PrimaryCircuit<'_, E1, E2, PS, V>
 where
   E1: Engine<Base = <E2 as Engine>::Scalar>,
   E2: Engine<Base = <E1 as Engine>::Scalar>,
-  PS: PredicateSet<E1::Scalar>,
+  PS: PredicateProgram<E1::Scalar>,
   V: IvcVariant<E1>,
 {
   fn alloc_running<CS: ConstraintSystem<E1::Scalar>>(
@@ -420,6 +417,16 @@ where
       le_bits_to_num(cs.namespace(|| "trace hash"), &bits)?
     };
     let z_in = select_vec(cs.namespace(|| "z in"), &z0, &zi, &base)?;
+    // φ (P4, G4): this circuit runs only if the program selects predicate k on its input state.
+    let selected = self
+      .predicates
+      .synthesize_select(&mut cs.namespace(|| "phi"), &i, &z_in)?;
+    cs.enforce(
+      || "phi selects k",
+      |lc| lc + selected.get_variable(),
+      |lc| lc + CS::one(),
+      |lc| lc + (E1::Scalar::from(self.k as u64), CS::one()),
+    );
     let z_next = self
       .predicates
       .synthesize(self.k, &mut cs.namespace(|| "F"), &z_in)?;
