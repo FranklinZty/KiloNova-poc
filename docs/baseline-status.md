@@ -40,7 +40,7 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | B4 | U1 and ι′ not in the transcript | **Fixed** at all 4 sites, with domain tags. `test_nifs_rejects_substituted_running_instance` fails on the old code and passes on the new. |
 | B5 | In-circuit M not bound to commit(λ) (G1) | **Closed by design**: decider check (`docs/claim-check-map.md` §3) |
 | B6 | No CompressedSNARK; verify needs witnesses (G2) | Deferred to **P7** |
-| B7 | No in-circuit φ; trace supplied to verifier (G3/G4) | **Closed for the v2 recursion (P4, 2026-11-10).** N15: the trace is a Poseidon chain computed in-circuit over each circuit's constant id (P5). G4: every primary circuit evaluates the program's selection function φ on its input state and enforces `φ(i, z_i) = k` (`ivc::program`, spec §9.8). G3: `ivc::RecursiveSNARK::verify(pp, n, z_0)` takes no schedule and returns the trace hash recovered from the proof; `verify_schedule` only compares it with an expected schedule (`docs/P4-report.md`). The v1 path is unchanged (historical, B15): it still takes the trace and uses the algebraic digest. P6 extends this to trees. |
+| B7 | No in-circuit φ; trace supplied to verifier (G3/G4) | **Closed for the v2 recursion (P4, 2026-11-10).** N15: the trace is a Poseidon chain computed in-circuit over each circuit's constant id (P5). G4: every primary circuit evaluates the program's selection function φ on its input state and enforces `φ(i, z_i) = k` (`ivc::program`, spec §9.8). G3: `ivc::RecursiveSNARK::verify(pp, n, z_0)` takes no schedule and returns the trace hash recovered from the proof; `verify_schedule` only compares it with an expected schedule (`docs/P4-report.md`). The v1 path is unchanged (historical, B15): it still takes the trace and uses the algebraic digest. P6 (2026-11-14) extends the binding to trees: tree hash over positions, ranges, ids and inputs, in-circuit ranges, task id in every link hash; `pcd::NodeProof::verify_root` takes no tree structure (`docs/P6-report.md`). |
 | B8 | NIFS unit tests only fold predicates with identical coefficients | **Closed in P3 for the v2 HFS**: `hfs::tests::test_chain_100_{r1cs,power5}_{direct,span}` fold two predicates with different wiring, negative coefficients and wrapping values for 100 alternating steps, every step accepted by the verifier, the decider and the kn-ccs oracle. The v1 unit tests are unchanged. |
 | B9 | `test_cross_predicate_fold_sat` drops sigmas and never calls is_sat | **Superseded in P3** by the v2 cross-predicate tests (real NIFS, decider and oracle on every fold: the chain tests, `test_mu_nu_combinations`, `proptest_random_ccs_fold`). The v1 test itself is unchanged (v1 is frozen until P5). |
 | B10 | Test fixtures use empty matrices, `pp_digest = 42` and zero witnesses | **Closed for v2 in P3**: v2 tests use `kn_ccs::gen::wiring_pair` and `random_satisfiable` (real matrices, full-field witnesses) and the real structure digest. v1 unit fixtures unchanged. |
@@ -98,6 +98,17 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | `kilonova::ivc::tests::test_phi_scheduled_program`, `test_p4_members_change_wiring`, `test_p4_one_hot_gadget_rejects_forged_bits`, `test_p4_cyclefold_rejects_non_unit_iota` | φ (native = in-circuit), wiring, one-hot / ι selection |
 | `kilonova::ivc::tests::test_p4_rejects_{schedule_disagreeing_with_phi,forged_ids,reordered_and_substituted_family,tampered_span}` | recursion-level P4 rejections with their layers |
 | `kilonova::ivc::tests::test_ivc_chain_k16` (ignored, run explicitly) | K = 16 recursive chain |
+
+## 5e. Tests added in P6 (tree PCD, `docs/P6-report.md`)
+
+| Test | Purpose |
+|---|---|
+| `kilonova::pcd::tests::test_transcript_native_matches_gadget_multi_{direct,span}`, `test_multi_gadget_matches_p5_gadget_size` | μ/ν-generic HFS gadget = native verifier for (μ, ν) ∈ {(1,1), (2,2), (2,1), (4,4)}; same size as the P5 gadget at (1, 1) |
+| `kilonova::pcd::tests::test_cyclefold_multi_circuit`, `test_cf_tree_fold_native_matches_gadget` | multi-input CycleFold circuit; relaxed–relaxed and fresh tree CycleFold folds (gadget = native) |
+| `kilonova::pcd::tests::test_tree_a2_small`, `test_tree_layout_dummy_rule`, `test_tree_same_input_different_positions` | a = 2 trees (L = 4, 5, 6, dummies), root statement, kn-ccs oracle on the root accumulator |
+| `kilonova::pcd::tests::test_tree_rejects_{duplicate_leaf,missing_leaf,cross_task_splice,swapped_children,forged_predecessor}` | rejection suite with detection layers |
+| `kilonova::pcd::tests::test_merge_circuit_breakdown_and_succinctness` | breakdown, succinctness of the merge circuit |
+| `kilonova::pcd::tests::test_tree_64_leaves_{all_arities,a2}` (ignored, run explicitly) | 64 leaves: same R for Direct a = 2, 4 and Span a = 8; Direct a = 8 rejected at Setup |
 
 ## 6. Reproduce
 

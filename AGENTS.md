@@ -10,6 +10,7 @@
 - **D1 decided (a): Nova fork + CycleFold** (2026-11-09, `docs/P3.0-decision.md`). Transcript v2 stays v2. P5 builds the CycleFold recursion on `kilonova::hfs`.
 - **P5 recursion on v2** (`Nova/src/kilonova/ivc/`): one primary augmented circuit per predicate over `E1::Scalar` verifying HFS v2 in-circuit, one CycleFold circuit over `E2::Scalar` for the E1 group operations (folded with an n-input Nova fold gadget), native `RecursiveSNARK` (`new`, `prove_step`, `verify`), in-circuit Poseidon trace chain, `kn-scenario ivc`. See `docs/P5-report.md`, spec §9. Not done: compression (P7). Trace recovery / φ: done in P4.
 - **P4 family, φ and index-span** (`Nova/src/kilonova/family/`, `ivc/program.rs`): `PredicateFamily` (stable ids, canonical member encoding = `kn_ccs::encode`, family digest = the HFS transcript digest and the link-hash digest slot, `HfsParams::from_family`, `PublicParams::setup_pinned`); in-circuit selection φ (`PredicateProgram`; `Scheduled<P>` keeps an explicit schedule in a program register of the state); `ivc::RecursiveSNARK::verify(pp, n, z0)` takes **no schedule** and returns `(z_n, trace, last_id)`, `verify_schedule` only compares (G3, G4 closed for v2); IVC_VERSION = 2. Explicit folded-matrix vs weighted-evaluation paths (`FoldedMatrices`, `weighted_eval`, `support_stats`); `kn-scenario family`. See `docs/P4-report.md`, spec §9.8 and §10.
+- **P6 tree PCD** (`Nova/src/kilonova/pcd/`): family `[leaf/k…, merge, dummy]`; a merge verifies one HFS v2 fold of **μ = a running + ν = a incoming** instances in-circuit (`pcd::gadgets::verify_hfs_multi`, μ/ν-generic, equal to the P5 gadget at μ = ν = 1) and folds a CycleFold accumulators (relaxed–relaxed folds, u and X as limbs) plus one multi-input CycleFold instance (`CycleFoldCircuitN`); leaves/dummies are the base case (no verifier). Tree hash + in-circuit ranges bind positions, order, ranges, ids; task id in every link hash. `NodeProof::verify_root(pp)` takes no tree structure and returns `(task_id, L, a, [0, a^d), R, tree hash)`; `TreeParams::root_statement(task)` gives the expected one. Never assume a = μ + ν. Direct a = 8 exceeds `MAX_SETUP_CONSTRAINTS` (do not raise the cap; a = 8 runs with Span). `kn-scenario tree`. See `docs/P6-report.md`, spec §11.
 - **B15:** fixed for native folding (P3) and recursion (P5, v2). The **v1 recursion path** (`nifs.rs`, `span/`, `kilonova::RecursiveSNARK`) is kept unmodified as historical evidence; its multi-step tests stay `#[ignore = "known issue B15 (v1 path only …)"]`. Do not modify v1 to "fix" it.
 - Invariants that must not regress:
   - The in-circuit HFS verifier is **succinct**. It must never take or re-evaluate the other curve's witness; that made setup diverge (44M constraints).
@@ -51,6 +52,8 @@ KiloNova-poc/
 │   ├── P5-report.md        # P5 acceptance report
 │   ├── P4-plan.md          # P4 family / φ / index-span plan
 │   ├── P4-report.md        # P4 acceptance report
+│   ├── P6-plan.md          # P6 tree PCD plan
+│   ├── P6-report.md        # P6 acceptance report
 │   └── PLAN.zh.md          # original Chinese PLAN (2026-09-21)
 │
 ├── Nova/                   # Core crate: nova-snark v0.42.0
@@ -144,6 +147,7 @@ KiloNova-poc/
 | `transcript.rs` | HFS transcript v1 domain tags + in-circuit tag helper (shared by native and gadget); `v2` submodule (P3) |
 | `ivc/` | P5 recursion on HFS v2 + CycleFold: `circuit.rs` (primary augmented circuit), `cyclefold.rs`, `gadgets.rs` (HFS gadget, n-input fold, non-native points), `shape.rs` (native power rows), `breakdown.rs`, `fixtures.rs` (K ≤ 16 chain family), `program.rs` (P4: φ, `Scheduled`), `tests.rs` |
 | `family/` | P4: `PredicateFamily`, canonical member encoding, family digest, explicit folded-matrix and weighted-evaluation paths, support statistics, tests |
+| `pcd/` | P6: tree PCD: `gadgets.rs` (μ/ν-generic HFS gadget, CycleFold tree accumulator), `cyclefold.rs` (multi-input CycleFold circuit, relaxed folds), `circuit.rs` (leaf/merge/dummy), `mod.rs` (params, prover, root verifier, drivers), `task.rs` (W4 task generator, layout, dummy rule), `breakdown.rs`, `tests.rs` |
 | `hfs/` | P3 native-field HFS v2: `structure.rs` (template, shapes, params, digest), `instance.rs` (Direct/Span), `sumcheck.rs`, `nifs.rs` (prover/verifier, μ/ν inputs), `decider.rs`, `tests.rs`, `vectors/` |
 | `circuit/mod.rs` | `KiloNovaAugmentedCircuit` for recursive verification |
 | `circuit/r1cs.rs` | In-circuit holographic folding verification gadgets |
@@ -202,6 +206,10 @@ target/release/kn-run scenario ivc K=2 steps=16 variant=direct verify_every=4 --
 # P4 family / index-span (support growth vs K) and its tests
 cargo test -p nova-snark --release --lib kilonova::family -- --test-threads=1
 target/release/kn-run scenario family source=synthetic K=16 overlap=partial --seed 101 --experiment p4-family
+
+# P6 tree PCD (64-leaf trees are #[ignore]d; run explicitly) and its kn-run scenario
+cargo test -p nova-snark --release --lib kilonova::pcd -- --test-threads=1
+target/release/kn-run scenario tree a=2 L=64 variant=direct --seed 101 --experiment p6-tree
 
 # Run NIFS-circuit benchmarks
 cargo run -p NIFS-circuit

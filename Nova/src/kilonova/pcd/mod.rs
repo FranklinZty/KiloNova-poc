@@ -559,7 +559,7 @@ where
   }
 
   /// PCD arity a.
-  pub fn arity(&self) -> usize {
+  pub fn pcd_arity(&self) -> usize {
     self.a
   }
 

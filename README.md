@@ -13,7 +13,7 @@ KILONOVA is a preprocessing recursive SNARK for fixed sets of non-uniform predic
 
 # Development Progress
 
-Status as of 2026-11-10 (P4). Details are in `PLAN.md`, `docs/baseline-status.md`, `docs/P3-report.md`, `docs/P5-report.md` and `docs/P4-report.md`.
+Status as of 2026-11-14 (P6). Details are in `PLAN.md`, `docs/baseline-status.md`, `docs/P3-report.md`, `docs/P5-report.md`, `docs/P4-report.md` and `docs/P6-report.md`.
 
 ## Holographic Folding Schemes
 
@@ -26,8 +26,9 @@ Status as of 2026-11-10 (P4). Details are in `PLAN.md`, `docs/baseline-status.md
 1. Succinct in-circuit HFS verifier; setup converges (2 iterations for K=3). ✅
 2. Index-span folding (Span variant). ✅ P4: authenticated `PredicateFamily` (stable ids, canonical kn-ccs matrix encoding, family digest bound in every transcript and link hash, `Nova/src/kilonova/family/`); explicit folded-matrix and weighted-evaluation paths cross-checked for K = 1, 2, 4, 16; support growth and memory vs K measured (`results/raw/p4-family.jsonl`).
 3. Multi-step non-uniform IVC. ✅ on HFS v2 with CycleFold (`Nova/src/kilonova/ivc/`, P5, D1 = (a)): K = 2/4, T = 1/16/64 chains verify, Direct and Span; rejections tested. P4: the schedule is enforced in-circuit by the program's selection function φ (`ivc::program`), and `verify(pp, n, z0)` takes no schedule; it returns the trace hash recovered from the proof (G3, G4 closed). The v1 recursion path (`kilonova::RecursiveSNARK`) is kept unchanged as historical evidence and remains B15-broken.
-4. Compressed SNARK / independent final verifier. ⏳ (P7)
-5. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; native folding over CCS (HFS v2, P3) ✅; recursion with a native degree-5 application row (template R1CS + power rows) ✅ (P5)
+4. Multi-predecessor PCD (trees). ✅ P6 (`Nova/src/kilonova/pcd/`): leaf, merge and dummy circuits in one non-uniform family; each merge verifies one HFS v2 fold of μ = a running + ν = a incoming instances in-circuit and folds the a CycleFold accumulators; positions, ranges, predecessor order, task id and leaf ids bound (tree hash + in-circuit ranges); `verify_root` needs only the proof and returns the root statement. 64-leaf W4 trees verify with the same result for a = 2, 4 (Direct) and 8 (Span; Direct a = 8 exceeds the setup cap); duplicate, missing, spliced, reordered and forged predecessors rejected (`results/raw/p6-tree.jsonl`).
+5. Compressed SNARK / independent final verifier. ⏳ (P7)
+6. Native high-degree CCS: builder and reference checker in `ccs/` (P2) ✅; native folding over CCS (HFS v2, P3) ✅; recursion with a native degree-5 application row (template R1CS + power rows) ✅ (P5)
 
 ## Build & test
 
@@ -46,6 +47,8 @@ target/release/kn-run scenario constraints variant=direct --experiment demo
 target/release/kn-run scenario bootstrap variant=span --seed 202
 target/release/kn-run test kilonova::tests::test_setup_fixed_point_converges
 ```
+
+P6 tree PCD: `target/release/kn-run scenario tree a=2 L=64 variant=direct --seed 101 --experiment p6-tree` (main, single-threaded); `mode=levels parallel=1 --threads 4 --experiment p6-tree-parallel` measures parallel latency separately.
 
 Scenarios: `noop`, `sleep ms=N`, `alloc bytes=N`, `fail` (harness calibration), plus `constraints`, `bootstrap` and `chain steps=T` with `variant=direct|span` on the K=3 example family. `chain` with T ≥ 2 currently fails on B15, and that failure is recorded.
 

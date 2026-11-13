@@ -2,7 +2,7 @@
 
 Version: 2026-10-05 (revision 2). Supersedes the 2026-09-21 plan, whose original Chinese text is kept in `docs/PLAN.zh.md`.
 
-Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3.0 decision memo 2026-11-03 (`docs/P3.0-decision.md`); **D1 decided (a), Nova fork + CycleFold, 2026-11-09**. P3 executed 2026-11-08 for native folding (`docs/P3-report.md`). P5 executed 2026-11-09 (`docs/P5-report.md`): multi-step non-uniform recursion on HFS v2 with CycleFold. P4 executed 2026-11-10 (`docs/P4-report.md`): `PredicateFamily`, in-circuit φ, verifier without a schedule (G3, G4 closed for v2), index-span cross-checks and support-growth records. P6–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
+Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3.0 decision memo 2026-11-03 (`docs/P3.0-decision.md`); **D1 decided (a), Nova fork + CycleFold, 2026-11-09**. P3 executed 2026-11-08 for native folding (`docs/P3-report.md`). P5 executed 2026-11-09 (`docs/P5-report.md`): multi-step non-uniform recursion on HFS v2 with CycleFold. P4 executed 2026-11-10 (`docs/P4-report.md`): `PredicateFamily`, in-circuit φ, verifier without a schedule (G3, G4 closed for v2), index-span cross-checks and support-growth records. P6 executed 2026-11-14 (`docs/P6-report.md`): tree PCD (`kilonova::pcd`) with μ = ν = a merges, a = 2 (mandatory) and a = 4 (Direct), a = 8 (Span only; Direct exceeds the setup cap), 64-leaf W4 trees, rejection suite. P7–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
 
 ## 0. What changed in this revision, and why
 
@@ -189,7 +189,9 @@ Acceptance:
 - Chaining independent per-step proofs, or checking in the host, is not recursion. The final check must authenticate the whole chain.
 - The setup fixed point converges within `MAX_SETUP_ITERATIONS` for every configuration used later; record the iteration count.
 
-### P6: Multi-predecessor PCD and workload closure (7–12 days; depends on P5)
+### P6: Multi-predecessor PCD and workload closure (done 2026-11-14; 7–12 days; depends on P5)
+
+Delivered: `Nova/src/kilonova/pcd/` (μ/ν-generic HFS v2 gadget, multi-input CycleFold circuit, relaxed–relaxed CycleFold folds, leaf/merge/dummy node circuits, `TreeParams`, `NodeProof::{prove_leaf, prove_dummy, prove_node, verify_root, verify_statement}`, `prove_tree`, task-tree generator `TreeTask` with the dummy rule, root statement `(task_id, L, a, [0, a^d), R, tree hash)`), spec §11, `kn-scenario tree`, `results/raw/p6-tree.jsonl` and `p6-tree-parallel.jsonl`. Plan `docs/P6-plan.md`, report `docs/P6-report.md`. μ = ν = a per merge (never a = μ + ν). Open: Direct a = 8 exceeds `MAX_SETUP_CONSTRAINTS` (CycleFold accumulator folds dominate the merge circuit); uncompressed (P7).
 
 Goal: tree-shaped execution, isolating the effects of arity and of the number of predicates.
 
@@ -338,7 +340,7 @@ Source pointers (these are selection candidates, not claims that they passed thi
 | s | Non-zeros per row of synthetic matrices | Default 3; sweep 1, 3, 8; not applicable to semantically constrained real circuits |
 | T | Real application steps in a chain | Default 256; 1, 16, 64, 256, 1024 |
 | a | Number of predecessors per PCD node | Default 2; 2, 4, 8; kept separate from μ/ν |
-| μ, ν | Number of ACCS / CCS inputs per fold | Filled in explicitly per protocol instance, never inferred from K or a. **Currently μ = ν = 1.** |
+| μ, ν | Number of ACCS / CCS inputs per fold | Filled in explicitly per protocol instance, never inferred from K or a. **Chain (P5/P4): μ = ν = 1; tree merge (P6): μ = ν = a; leaves/dummies: no fold.** |
 | L | Real leaf tasks in a tree | Default 64; scale experiments 64, 256, 1024 |
 | threads | Actual compute threads | Main results 1; extension experiments 8 if the machine allows |
 | seeds | Semantic input seeds | Default 101, 202, 303; shared by all comparable schemes |
@@ -500,7 +502,7 @@ Gates:
 - G3 (P7–P8): independent final verification, statement binding and fair baselines are complete. Full formal experiments may start.
 - G4 (P9–P10): raw data, statistics, reproduction and paper-scope alignment are complete. The research-artifact release bar is met.
 
-Current status (2026-11-10):
+Current status (2026-11-14):
 
 | Period | Status | Evidence |
 |---|---|---|
@@ -511,6 +513,7 @@ Current status (2026-11-10):
 | P3 | **Done for native folding** (no recursion; transcript v2 follows D1 = (a), confirmed 2026-11-09; no independent review yet) | `docs/P3-report.md`; kilonova suite → 53 passed, 5 ignored (4 × B15 in the v1 recursion path, 1 perf harness); `kilonova::hfs` → 20 passed; `cargo test -p kn-ccs --release` → 21 passed; `results/raw/p3-hfs.jsonl` (28 records). B15 fixed for native folding, still open for recursion (P5). |
 | P5 | **Done** for the stated scope (D1 (a); Direct and Span; native d = 5 row in the loop; uncompressed; minimal P4 only; no independent review yet) | `docs/P5-report.md`; kilonova suite → 76 passed, 7 ignored (4 × v1 B15, 1 perf harness, 2 long P5 chains run explicitly: 2 passed); `results/raw/p5-ivc.jsonl` (22 records: K ∈ {2,4} × T ∈ {1,16,64} × 3 seeds Direct, plus Span and pow5); B15 fixed for recursion (v1 path kept, still broken) |
 | P4 | **Done** for the stated scope (family digest, φ, trace recovery, span cross-checks K ∈ {1,2,4,16}, K = 16 chain; no independent review yet) | `docs/P4-report.md`; kilonova suite → 95 passed, 8 ignored (4 × v1 B15, 1 perf harness, 3 long chains run explicitly: 3 passed); kn-ccs 21, kn-run 10; `results/raw/p4-family.jsonl` (30 records) |
-| P6–P10 | Not started | — |
+| P6 | **Done** for a = 2 (mandatory), a = 4 (Direct) and a = 8 (Span only; Direct a = 8 exceeds the setup cap); uncompressed; no independent review yet | `docs/P6-report.md`; kilonova suite → 109 passed, 10 ignored (4 × v1 B15, 1 perf harness, 3 long chains, 2 long trees run explicitly); kn-ccs 21, kn-run 10; `results/raw/p6-tree.jsonl` (13 records: L = 64, seeds 101/202/303, same R for every a; padding record L = 50; Direct a = 8 setup failure) + `p6-tree-parallel.jsonl` (1, labelled) |
+| P7–P10 | Not started | — |
 
 A status changes only on the commands, results and versions in an acceptance report. Creating or revising this plan does not mean prototype code, tests or experiments have been executed beyond what the P0 reports show.

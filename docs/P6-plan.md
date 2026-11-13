@@ -102,7 +102,7 @@ So for merges `μ = ν = a` and `μ + ν = 2a`. Every record and config carries 
 | μ/ν mapping in every config/record | `configs/common.toml [pcd]`, record fields `a`, `mu`, `nu`, `details.mu_nu_mapping` | — |
 | μ = 2 gadget native = gadget | `pcd::tests::test_transcript_native_matches_gadget_multi_{direct,span}` ((μ, ν) ∈ {(1,1), (2,2), (2,1), (4,4)}; tampering rejected) and `test_multi_gadget_matches_p5_gadget_size` | — |
 | CycleFold multi circuit and tree folds | `test_cyclefold_multi_circuit`, `test_cf_tree_fold_native_matches_gadget` | — |
-| succinctness | `test_merge_circuit_is_succinct` (merge size independent of member wiring and far below the family nnz); P5 `test_primary_circuit_is_succinct` still passes | — |
+| succinctness | `test_merge_circuit_breakdown_and_succinctness` (merge size independent of member wiring and far below the family nnz); P5 `test_primary_circuit_is_succinct` still passes | — |
 | no regressions | kilonova suite (95 passed / 8 ignored on master + new tests), P4/P5 long chains run explicitly, kn-ccs 21, kn-run 10 | — |
 
 ## 5. Decisions

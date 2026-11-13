@@ -326,7 +326,7 @@ fn alloc_limbs<E: Engine, CS: ConstraintSystem<E::Base>>(
   mut cs: CS,
   v: Option<&E::Scalar>,
 ) -> Result<Vec<AllocatedNum<E::Base>>, SynthesisError> {
-  let limbs = v.map(|v| limbs_of::<E::Scalar, E::Base>(v));
+  let limbs = v.map(limbs_of::<E::Scalar, E::Base>);
   (0..BN_N_LIMBS)
     .map(|l| {
       AllocatedNum::alloc(cs.namespace(|| format!("{l}")), || {
