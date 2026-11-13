@@ -77,21 +77,28 @@ pub struct BreakdownCS<F: PrimeField> {
   stack: Vec<String>,
   out: Breakdown,
   inputs: usize,
+  cat: fn(&[String]) -> &'static str,
   _p: PhantomData<F>,
 }
 
 impl<F: PrimeField> Default for BreakdownCS<F> {
   fn default() -> Self {
-    Self {
-      stack: Vec::new(),
-      out: Breakdown::default(),
-      inputs: 1,
-      _p: PhantomData,
-    }
+    Self::with_categorizer(category)
   }
 }
 
 impl<F: PrimeField> BreakdownCS<F> {
+  /// A breakdown with another path → component map (the tree PCD circuits, P6).
+  pub fn with_categorizer(cat: fn(&[String]) -> &'static str) -> Self {
+    Self {
+      stack: Vec::new(),
+      out: Breakdown::default(),
+      inputs: 1,
+      cat,
+      _p: PhantomData,
+    }
+  }
+
   /// The result.
   pub fn finish(self) -> Breakdown {
     self.out
@@ -133,7 +140,7 @@ impl<F: PrimeField> ConstraintSystem<F> for BreakdownCS<F> {
     *self
       .out
       .by_category
-      .entry(category(&self.stack).to_string())
+      .entry((self.cat)(&self.stack).to_string())
       .or_default() += 1;
     let key = match self.stack.first().map(String::as_str) {
       Some("hfs") => format!(

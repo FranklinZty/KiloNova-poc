@@ -1364,6 +1364,293 @@ mod family {
   }
 }
 
+/// P6: tree PCD over the W4 task (`kilonova::pcd`). `a` (arity), `L` (real leaves), `K_leaf`
+/// (leaf predicates of the P4 chain family), `variant`, `mode=seq` (depth-first, one node at a
+/// time: the main single-threaded record) or `mode=levels parallel=1` (each level's nodes
+/// proven concurrently on the rayon pool: a separately labelled parallel-latency record).
+mod tree {
+  use super::*;
+  use nova_snark::kilonova::{
+    hfs::{Direct, Span},
+    ivc::{fixtures::ChainPredicates, IvcVariant, PrimaryTemplate},
+    pcd::{
+      breakdown::node_breakdown, node_constraint_counts, prove_tree, prove_tree_levels, LayoutRole,
+      NodeRole, TreeParams, TreeTask, PCD_VERSION,
+    },
+  };
+
+  fn bytes<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, String> {
+    bincode::serde::encode_to_vec(v, bincode::config::legacy()).map_err(|e| e.to_string())
+  }
+
+  fn stats(v: &[f64]) -> Value {
+    if v.is_empty() {
+      return json!({"n": 0, "sum_ms": 0.0});
+    }
+    let mut s = v.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    json!({
+      "n": s.len(),
+      "sum_ms": s.iter().sum::<f64>(),
+      "median_ms": s[s.len() / 2],
+      "min_ms": s[0],
+      "max_ms": s[s.len() - 1],
+    })
+  }
+
+  pub fn run(out: &mut Output, args: &Args) -> Result<(), String> {
+    let a: usize = arg(args, "a", Some(2))?;
+    let l: usize = arg(args, "L", Some(64))?;
+    let k_leaf: usize = arg(args, "K_leaf", Some(2))?;
+    let seed: u64 = arg(args, "seed", None)?;
+    let mode = arg(args, "mode", Some("seq".to_string()))?;
+    let parallel: usize = arg(args, "parallel", Some(0))?;
+    if a < 2 || l == 0 || !(2..=16).contains(&k_leaf) {
+      return Err("need a >= 2, L >= 1, 2 <= K_leaf <= 16".into());
+    }
+    if !matches!(mode.as_str(), "seq" | "levels") || (parallel > 0 && mode != "levels") {
+      return Err("mode = seq | levels; parallel=1 needs mode=levels".into());
+    }
+    match arg(args, "variant", Some("direct".to_string()))?.as_str() {
+      "direct" => go::<Direct>(out, a, l, k_leaf, seed, &mode, parallel > 0),
+      "span" => go::<Span>(out, a, l, k_leaf, seed, &mode, parallel > 0),
+      v => Err(format!("unknown variant {v}")),
+    }
+  }
+
+  #[allow(clippy::too_many_arguments)]
+  fn go<V: IvcVariant<E1>>(
+    out: &mut Output,
+    a: usize,
+    l: usize,
+    k_leaf: usize,
+    seed: u64,
+    mode: &str,
+    parallel: bool,
+  ) -> Result<(), String> {
+    let leaf = ChainPredicates::<F1>::new(k_leaf, false);
+    let ids: Vec<String> = (0..k_leaf).map(|k| leaf.member_id(k)).collect();
+    let task = TreeTask::<F1>::generate(seed, l, k_leaf);
+    let layout = task.layout(a);
+
+    out.f("scheme", format!("kilonova-pcd-v{PCD_VERSION}-{}", V::NAME));
+    out.f("workload", format!("w4-tree-chain-k{k_leaf}-L{l}"));
+    out.f("protocol_version", 2);
+    out.f("transcript_version", 2);
+    out.f(
+      "security_profile",
+      format!(
+        "pallas/vesta; HFS v2 in-circuit over E1::Scalar (mu = nu = a per merge) + multi-input CycleFold over E2::Scalar; tree PCD v{PCD_VERSION} (tree hash, task id, in-circuit ranges, dummy rule); pedersen; poseidon; challenge {NUM_CHALLENGE_BITS} bits; hash {NUM_HASH_BITS} bits; non-ZK; uncompressed (verify reads the root witnesses, G2)"
+      ),
+    );
+    out.f("K", k_leaf + 2);
+    out.f("L", l);
+    out.f("a", a);
+    out.f("mu", a);
+    out.f("nu", a);
+    out.why(
+      "T",
+      "tree run: no chain length; see L (real leaves) and details.layout",
+    );
+    out.d(
+      "mu_nu_mapping",
+      json!({
+        "merge": {"a": a, "mu": a, "nu": a, "note": "one HFS v2 fold of the a children's running ACCS (mu) and their own CCCS (nu); a != mu + nu"},
+        "leaf": {"mu": 0, "nu": 0, "note": "base case, no fold, no verifier"},
+        "dummy": {"mu": 0, "nu": 0, "note": "base case (padding subtree beyond L)"},
+        "cyclefold": {"relaxed_folds": a - 1, "fresh_folds": 1},
+      }),
+    );
+    out.d("mode", mode);
+    out.d("parallel", parallel);
+    out.d(
+      "layout",
+      json!({
+        "depth": layout.depth,
+        "capacity": layout.capacity,
+        "leaves": layout.num_leaves(),
+        "merges": layout.num_merges(),
+        "dummies": layout.num_dummies(),
+        "merges_if_unpadded": (l.max(1) - 1).div_ceil(a - 1),
+      }),
+    );
+    out.d(
+      "leaf_predicates",
+      json!(task.leaves().iter().map(|x| x.k).collect::<Vec<_>>()),
+    );
+    out.f(
+      "input_digest",
+      digest_of(
+        "tree",
+        &[
+          ("variant", V::NAME.into()),
+          ("a", a.to_string()),
+          ("L", l.to_string()),
+          ("K_leaf", k_leaf.to_string()),
+          ("seed", seed.to_string()),
+          ("task_id", fe_hex(&task.task_id())),
+        ],
+      ),
+    );
+
+    let t = Instant::now();
+    let (pp, report) = TreeParams::<E1, E2, V>::setup(&leaf, &ids, a, PrimaryTemplate::R1cs)
+      .map_err(|e| format!("setup: {e} (layer {:?})", e.layer()))?;
+    out.f("setup_ms", ms(t));
+    out.f("setup_iterations", report.iterations.len());
+    out.d("setup_report", serde_json::to_value(&report).unwrap());
+    let hfs = pp.hfs();
+    out.f("d", hfs.template().degree());
+    out.f("t", hfs.t());
+    out.f("q", hfs.template().q());
+    out.f("m_aug", hfs.m());
+    out.f("n_aug", hfs.n());
+    let raw_max = report
+      .members
+      .iter()
+      .map(|(_, r)| r.r1cs_rows + r.pow_rows)
+      .max()
+      .unwrap_or(0);
+    out.f("padding", hfs.m() - raw_max);
+    out.f(
+      "N_total",
+      hfs.shapes().iter().map(|s| s.nnz()).sum::<usize>(),
+    );
+    let mut breakdown = Vec::new();
+    let mut app = Vec::new();
+    for id in 0..hfs.k() {
+      let role = pp.role(id).unwrap();
+      let b = node_breakdown(&pp, &leaf, role).map_err(|e| e.to_string())?;
+      let c = node_constraint_counts(&pp, &leaf, role).map_err(|e| e.to_string())?;
+      if b.total != c.num_constraints || b.by_category.values().sum::<usize>() != b.total {
+        return Err("breakdown does not sum to the CountingCS total".into());
+      }
+      if let NodeRole::Leaf(_) = role {
+        app.push(*b.by_category.get("application").unwrap_or(&0));
+      }
+      breakdown.push(
+        json!({"member": pp.family().ids()[id], "role": format!("{role:?}"), "breakdown": b}),
+      );
+    }
+    out.f("m_app", app.iter().max().copied().unwrap_or(0));
+    out.why(
+      "n_app",
+      "the leaf application has no stand-alone shape here; its rows are details.constraint_breakdown[*].application",
+    );
+    out.why("w_app", "see n_app");
+    out.d("constraint_breakdown", json!(breakdown));
+    out.d(
+      "cyclefold",
+      json!({
+        "num_inputs": pp.cyclefold_num_inputs(),
+        "raw_cons_vars_io": report.cyclefold_raw,
+        "padded_cons_vars": report.cyclefold_padded,
+      }),
+    );
+    out.d("pp_digest", fe_hex(&pp.digest()));
+    out.d("family_digest", fe_hex(&pp.family().digest()));
+    out.d("family_ids", json!(pp.family().ids()));
+    out.d("task_id", fe_hex(&task.task_id()));
+
+    let (root, run) = if mode == "seq" {
+      prove_tree(&pp, &leaf, &task)
+    } else {
+      prove_tree_levels(&pp, &leaf, &task, parallel)
+    }
+    .map_err(|e| format!("prove: {e} (layer {:?})", e.layer()))?;
+    let per = |f: &dyn Fn(&LayoutRole) -> bool| -> Vec<f64> {
+      run
+        .nodes
+        .iter()
+        .filter(|n| f(&n.node.role))
+        .map(|n| n.prove_ms)
+        .collect()
+    };
+    let leaf_ms = per(&|r| matches!(r, LayoutRole::Leaf { .. }));
+    let merge_ms = per(&|r| matches!(r, LayoutRole::Merge));
+    let dummy_ms = per(&|r| matches!(r, LayoutRole::Dummy));
+    let sequential: f64 = run.nodes.iter().map(|n| n.prove_ms).sum();
+    // computed critical path: Σ over levels of the slowest node of the level
+    let critical: f64 = (0..=layout.depth)
+      .map(|h| {
+        run
+          .nodes
+          .iter()
+          .filter(|n| n.node.level == h)
+          .map(|n| n.prove_ms)
+          .fold(0.0, f64::max)
+      })
+      .sum();
+    out.f("recursive_ms", sequential);
+    out.d(
+      "per_node_prove_ms",
+      json!(run
+        .nodes
+        .iter()
+        .map(|n| json!({"level": n.node.level, "lo": n.node.lo, "hi": n.node.hi, "role": n.node.role, "ms": n.prove_ms}))
+        .collect::<Vec<_>>()),
+    );
+    out.d(
+      "work",
+      json!({
+        "leaf": stats(&leaf_ms),
+        "merge (internal-node work)": stats(&merge_ms),
+        "dummy (padding work)": stats(&dummy_ms),
+        "sequential_prove_ms": sequential,
+        "sequential_note": "sum of per-node wall times of this process (single-threaded when RAYON_NUM_THREADS=1); the record's cpu_user_ms is the process total incl. setup and verify",
+        "critical_path_ms": critical,
+        "critical_path_note": "COMPUTED, not measured: sum over levels of the slowest node of that level, from these per-node times; assumes one worker per node and no contention",
+        "driver_wall_ms": run.wall_ms,
+        "level_wall_ms": run.level_wall_ms,
+        "level_wall_note": if parallel { "MEASURED parallel latency: nodes of a level proven concurrently on the rayon pool (threads in the record)" } else { "levels proven one node at a time" },
+      }),
+    );
+    let t = Instant::now();
+    let res = root.verify_root(&pp);
+    out.f("verify_warm_ms", ms(t));
+    let expected = pp.root_statement(&task, |k, x| leaf.output(k, x));
+    let ok = matches!(&res, Ok(st) if *st == expected);
+    if let Ok(st) = &res {
+      out.d(
+        "root_statement",
+        json!({
+          "task_id": fe_hex(&st.task_id),
+          "L": st.num_leaves,
+          "a": st.arity,
+          "range": [st.lo, st.hi],
+          "result": st.result.iter().map(fe_hex).collect::<Vec<_>>(),
+          "tree_hash": fe_hex(&st.tree_hash),
+        }),
+      );
+    }
+    out.f("verification_ok", ok);
+    out.f("checkpoint_bytes", bytes(&root)?.len());
+    out.why(
+      "witness_ms",
+      "witness generation is part of each node proof (circuit synthesis); see details.per_node_prove_ms",
+    );
+    out.why(
+      "public_state_bytes",
+      "no compressed public statement before P7; checkpoint_bytes is the uncompressed root NodeProof",
+    );
+    out.d(
+      "timing_note",
+      "in-process Instant timers; development machine, orientation only, no performance claim",
+    );
+    // the target result R is the same for every arity: result_digest depends only on (seed, L)
+    let mut result = Vec::new();
+    for z in &expected.result {
+      result.extend_from_slice(z.to_repr().as_ref());
+    }
+    out.f("result_digest", sha256_hex(&result));
+    match res {
+      Ok(_) if ok => Ok(()),
+      Ok(_) => Err("the root statement is not the task's".into()),
+      Err(e) => Err(format!("verify: {e} (layer {:?})", e.layer())),
+    }
+  }
+}
+
 fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
   let variant = || -> Result<String, String> { arg(args, "variant", Some("direct".to_string())) };
   let seed = || -> Result<u64, String> { arg(args, "seed", Some(101)) };
@@ -1396,6 +1683,7 @@ fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
     "hfs" => scenario_hfs(out, args),
     "ivc" => scenario_ivc(out, args),
     "family" => family::run(out, args),
+    "tree" => tree::run(out, args),
     other => Err(format!("unknown scenario '{other}'")),
   }
 }
@@ -1404,7 +1692,7 @@ fn main() {
   let argv: Vec<String> = std::env::args().skip(1).collect();
   let Some(name) = argv.first().cloned() else {
     eprintln!(
-      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs|ivc|family> [key=value ...]"
+      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs|ivc|family|tree> [key=value ...]"
     );
     std::process::exit(2);
   };

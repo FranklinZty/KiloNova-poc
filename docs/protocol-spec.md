@@ -294,3 +294,52 @@ Code: `Nova/src/kilonova/family/`. Tests: `family::tests` and the P4 tests in `i
 | recursive family (K primary circuits, 2.76 M non-zeros each) | 1.085, 1.085, 1.085, 1.170 (K ≤ 16) |
 
 In every run the explicit support reached the union exactly when the K-th distinct member was folded. For the recursive family the weighted path's evaluation time and base storage grow linearly in K (0.23 s → 1.54 s, 133 MB → 2.12 GB from K = 1 to 16) while the explicit matrix stays at 133–155 MB; the decider currently uses the weighted path.
+
+## 11. Tree PCD on HFS v2 (P6, `pcd::PCD_VERSION = 1`)
+
+Code: `Nova/src/kilonova/pcd/` (`mod.rs`, `circuit.rs`, `gadgets.rs`, `cyclefold.rs`, `task.rs`, `breakdown.rs`). Plan `docs/P6-plan.md`, report `docs/P6-report.md`. HFS transcript v2 (§8) and the chain layer (§9, IVC version 2) are unchanged; the tree layer has its own tags and version.
+
+### 11.1 Task, target result, layout and dummy rule
+
+- **Task** (W4): L ≥ 1 leaf tasks `(k_p, x_p)`, `k_p < K_leaf` a member of the P4 chain family (`ivc::fixtures::ChainPredicates`; members 0 and 1 by default, which differ in wiring), `x_p ∈ F²`. Inputs may repeat, positions are unique. `task_id` = `DigestComputer` (SHA3-256 → 250-bit element) over `(PCD_VERSION, label, L, [(k_p, x_p)])`.
+- **Target result** `R = Σ_{p<L} β^p · F_{k_p}(x_p)` with `β = 7`; it depends on positions, not on the bracketing, so every arity proves the same R.
+- **Layout** for arity a ≥ 2: `d = min{d ≥ 0 : a^d ≥ L}`, `N = a^d`; node (h, j) covers `[j·a^h, (j+1)·a^h)`. Leaf if h = 0 and lo < L; merge if h ≥ 1 and lo < L; **dummy** if lo ≥ L and its parent's lo < L (a maximal padding subtree, one proof); nothing else exists. Padding work is at most `(a − 1)·d` dummy proofs.
+
+### 11.2 Family and node circuits
+
+The family is `[leaf/0, …, leaf/(K_leaf−1), merge, dummy]` (K = K_leaf + 2 members, ids `tree/leaf/<chain id>`, `tree/merge-a<a>`, `tree/dummy`, label `kn-p6-tree-a<a>`, selector `"kn-pcd-tree-v1" ‖ a ‖ K_leaf ‖ β ‖ 32 ‖ PCD_VERSION` (u64 LE)), padded to common `(m, num_w, num_io = 1)` and folded by HFS v2 with the family digest (§10). Every member has one public output
+
+```text
+H_link = H(TAG_LINK = 0x4b4e_5043_4401_0001, pp_digest, family_digest, task_id, L, lo, hi, r[0..2], h, U, cfU)
+```
+
+with U in the §8.5 running-instance encoding and `cfU = W(x, y, inf), E(x, y, inf), u (4 × 64-bit limbs), X_i (4 limbs each)`. Positions, L and widths are range-checked to 32 bits.
+
+| Member | Advice | Enforces | Statement `(lo, hi, r, h)` | Accumulators out |
+|---|---|---|---|---|
+| leaf k | p, x | `p < 2^32`, `L − 1 − p ∈ [0, 2^32)`; `y = F_k(x)` | `(p, p+1, β^p·y, H(TAG_LEAF = …0002, p, k, x))`, k a constant | defaults (base case) |
+| dummy | lo, hi | `lo − L ∈ [0, 2^32)`, `hi − lo − 1 ∈ [0, 2^32)` | `(lo, hi, 0, H(TAG_DUMMY = …0004, lo, hi))` | defaults (base case) |
+| merge | a × `(S_c, U_c, u_c, cfU_c)`, HFS proof, hints, CycleFold `T_1..T_{a−1}`, `cf_W`, `cf_T` | `u_c.io[0] = H_link(ctx, S_c, U_c, cfU_c)` with the node's own `(task_id, L)`; `lo_c = hi_{c−1}`, `hi_c − lo_c = hi_0 − lo_0`; HFS v2 verifier for **μ = a, ν = a** (always active); CycleFold fold | `(lo_0, hi_{a−1}, Σ r_c, H(TAG_NODE = …0003, lo, hi, h_0..h_{a−1}))` | `U'` = fold, `cfU'` |
+
+Defaults: U with identity commitments (λ = 0 for Span), u = 0, io = r_x = r_y = v = 0; cfU with identity W, E, u = 0, X = 0. There is no `is_base` gate: the base case is a separate member without a verifier.
+
+### 11.3 Merge fold and CycleFold
+
+- **HFS**: one fold of running `U_0..U_{a−1}` and incoming `u_0..u_{a−1}` (running first, weights `ρ^0..ρ^{2a−1}`), transcript §8.5 with `(μ, ν) = (a, a)`. Gadget `pcd::gadgets::verify_hfs_multi` (any μ ≥ 1, ν); for μ = ν = 1 it has the constraint count of the P5 gadget.
+- **CycleFold circuit** (`pcd::cyclefold::CycleFoldCircuitN`): public inputs `ρ, [k_0..k_{ν−1}] (Direct), W_0..W_{μ+ν−1}, W_out, then per j: M_0[j]..M_{μ−1}[j], M_out[j]`; `n_cf = 1 + [D]ν + 2(μ+ν+1) + [D]·t·2(μ+1)` (Direct a = 2: 31, a = 4: 53; Span a = 2: 11). `W_out = Σ ρ^i W_i` and `M_out[j] = Σ_{i<μ} ρ^i M_i[j] + Σ_l ρ^{μ+l} ι_{k_l}[j]` by Horner's rule with the 128-bit ρ only; each `ι_{k_l}` selected in-circuit from a one-hot `k_l`. For μ = ν = 1 the input order and size equal §9.2.
+- **CycleFold accumulators**: `acc ← cfU_0`; for c = 1..a−1 a relaxed–relaxed fold `r = H(TAG_CF_RELAXED = 0x4b4e_4346_0002_0001, pp, acc, cfU_c, T_c)`, `W ← W + r W_c`, `E ← E + r(T_c + r E_c)`, `u ← u + r u_c`, `X ← X + r X_c` (mod |E2::Scalar|, u and X as bignats); then a fresh fold `r = H(TAG_CF_FRESH = 0x4b4e_4346_0002_0002, pp, acc, cf_W, x limbs, cf_T)` as §9.4 with u reduced. Native twins `pcd::cyclefold::cf_fold_{relaxed,fresh}_prove`.
+
+### 11.4 Root statement and verifier
+
+`RootStatement = (task_id, L, a, lo, hi, R, h)`. `NodeProof::verify_root(pp)` takes no tree structure: **Input** (lengths, member id); **Statement** (`1 ≤ L < 2^32`, `lo = 0`, `hi = a^d` for the minimal d); **LinkHash**; **Decider** (`hfs::decide`); **CycleFold** (relaxed R1CS with openings); **RootIncoming** (the root's own CCCS opens and its member's CCS holds). `verify_statement(pp, expected)` then compares (layer Statement); `TreeParams::root_statement(task, eval)` computes the expected statement from the task alone. In-circuit violations anywhere in the tree make that node's CCCS unsatisfied; the parent's in-circuit HFS verifier then fails, and so on to the root, so they surface at RootIncoming (`NodeProof::check_incoming` locates the node in tests).
+
+**Claim.** Up to the (unproven) knowledge soundness of the folding layers: an accepted `verify_statement` for the task-derived statement shows that leaf proofs exist for exactly the positions `0..L−1`, each once and in order (contiguous equal-width ranges from the root `[0, a^d)` down, dummies only at `lo ≥ L`), leaf p ran member `k_p` on `x_p` (bound by the tree hash), every node used the same task context, and `R = Σ β^p F_{k_p}(x_p)`. With deterministic F_k it is "this specific task result".
+
+### 11.5 μ/ν ↔ a (never a = μ + ν)
+
+| Configuration | a | HFS μ | HFS ν | CycleFold |
+|---|---|---|---|---|
+| chain step (§9) | 1 | 1 | 1 | 1 running + 1 fresh |
+| tree leaf / dummy | 0 | 0 | 0 | none (defaults) |
+| tree merge | a | a | a | a running (a − 1 relaxed folds) + 1 fresh |
+| root verification | — | decider on 1 accumulator | — | 1 accumulator checked |

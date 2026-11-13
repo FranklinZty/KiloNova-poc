@@ -126,3 +126,23 @@ Spec: `docs/protocol-spec.md` §10. Layers are `hfs::Layer` (Input, Verifier, De
 | Explicit folded matrix (step by step) = from λ = weighted evaluation = protocol claims = kn-ccs MLE; λ tracked = witness λ; support reaches the union | `FoldedMatrices`, `weighted_eval`, `decide`, `check_accs` | — | `test_span_paths_agree_k{1,2,4,16}` (Direct and Span) | ✅ |
 | Zero-term template embedding preserves semantics for every u | `kn_ccs::pad::embed_zero_terms` + HFS fold with u ≠ 1 | Decider + oracle | `test_zero_term_embedding_folds` | ✅ |
 | At least two members change the wiring | sparsity patterns of the application circuits | — | `ivc::tests::test_p4_members_change_wiring` | ✅ |
+
+## 8. Tree PCD (P6, `kilonova::pcd`)
+
+Spec: `docs/protocol-spec.md` §11. Layers are `pcd::TreeLayer` (Input, Setup, Prover, Statement, LinkHash, Decider, CycleFold, RootIncoming). "Circuit" means the node's own CCCS is unsatisfied (`NodeProof::check_incoming` → RootIncoming); in a full tree this propagates through the parents' in-circuit HFS verifiers to the root's CCCS.
+
+| Claim | Checker | Layer | Test | Status |
+|---|---|---|---|---|
+| μ/ν-generic HFS gadget = native `NIFS::verify` (challenges, folded u, io, v, λ) for (μ, ν) ∈ {(1,1), (2,2), (2,1), (4,4)}; tampered round message, σ, τ, Y round, incoming id, running order rejected | `pcd::gadgets::verify_hfs_multi` | Gadget | `pcd::tests::test_transcript_native_matches_gadget_multi_{direct,span}` | ✅ |
+| For μ = ν = 1 the generic gadget has the P5 gadget's size | constraint count | — | `test_multi_gadget_matches_p5_gadget_size` | ✅ |
+| Multi-input CycleFold: Horner RLC of μ + ν points and in-circuit ι selection; wrong W_out, ρ, k, M_out rejected; for μ = ν = 1 equal to the P5 circuit | `CycleFoldCircuitN` | CF circuit | `test_cyclefold_multi_circuit` | ✅ |
+| Relaxed–relaxed and fresh CycleFold folds: gadget = native, results satisfied | `CfAcc::fold_{relaxed,fresh}`, `cf_fold_{relaxed,fresh}_prove` | — | `test_cf_tree_fold_native_matches_gadget` | ✅ |
+| A tree proves the task-derived root statement (task id, L, range `[0, a^d)`, R, tree hash); root accumulator passes the kn-ccs oracle; dummy subtrees beyond L | `verify_root`, `verify_statement`, `root_statement` | — | `test_tree_a2_small` (L = 4, 5, 6), `test_tree_layout_dummy_rule` | ✅ |
+| 64 real leaves give the same R for every supported a | `verify_statement` per a | — | `test_tree_64_leaves_all_arities` (`#[ignore]`), `kn-scenario tree` records (`result_digest`) | see `docs/P6-report.md` |
+| Duplicate leaves rejected | `check_children`; merge circuit ranges | Input; Circuit → RootIncoming / Statement | `test_tree_rejects_duplicate_leaf` | ✅ |
+| Missing leaves rejected (gap; dummy below L; shorter task) | `check_children`, `prove_dummy`; merge/dummy circuits; `verify_statement` | Input; Circuit → RootIncoming; Statement | `test_tree_rejects_missing_leaf` | ✅ |
+| Cross-task splicing rejected | task context in `check_children`; child link hash under the node's own task id; `verify_statement` | Input; Circuit → RootIncoming; Statement | `test_tree_rejects_cross_task_splice` | ✅ |
+| Illegal order (swapped children) rejected | `check_children`; merge circuit ranges | Input; Statement / Circuit → RootIncoming | `test_tree_rejects_swapped_children` | ✅ |
+| Forged predecessors (child statement, child proof, child accumulators) rejected; tampered root statement/accumulators rejected | merge circuit (link hash, HFS sum-check); root verifier | Circuit → RootIncoming; LinkHash, Statement, Decider, CycleFold | `test_tree_rejects_forged_predecessor` | ✅ |
+| Same input at different positions is valid; same position twice is not | tree hash / β^p include p; ranges | — | `test_tree_same_input_different_positions` + duplicate test | ✅ |
+| Merge circuit is succinct (independent of members' wiring, below the family nnz); breakdown disjoint | CountingCS, `node_breakdown` | — | `test_merge_circuit_breakdown_and_succinctness` | ✅ |

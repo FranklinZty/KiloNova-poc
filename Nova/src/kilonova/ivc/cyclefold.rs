@@ -67,13 +67,13 @@ pub fn num_inputs(t_idx: usize) -> usize {
   }
 }
 
-struct InPoint<F: PrimeField> {
+pub(crate) struct InPoint<F: PrimeField> {
   x: AllocatedNum<F>,
   y: AllocatedNum<F>,
 }
 
 impl<E1: Engine> CycleFoldCircuit<'_, E1> {
-  fn alloc_point_input<CS: ConstraintSystem<E1::Base>>(
+  pub(crate) fn alloc_point_input<CS: ConstraintSystem<E1::Base>>(
     mut cs: CS,
     c: Option<Coords<E1::Base>>,
   ) -> Result<InPoint<E1::Base>, SynthesisError> {
@@ -88,7 +88,7 @@ impl<E1: Engine> CycleFoldCircuit<'_, E1> {
 
   /// `(x, y)` as an `AllocatedPoint` with a derived infinity bit: `b·x = b·y = 0` and the
   /// on-curve check unless `b`. Since `(0, 0)` is not on the curve, `b` is unique.
-  fn to_point<CS: ConstraintSystem<E1::Base>>(
+  pub(crate) fn to_point<CS: ConstraintSystem<E1::Base>>(
     mut cs: CS,
     p: &InPoint<E1::Base>,
   ) -> Result<AllocatedPoint<E1>, SynthesisError> {
@@ -126,7 +126,7 @@ impl<E1: Engine> CycleFoldCircuit<'_, E1> {
     Ok(pt)
   }
 
-  fn enforce_equal<CS: ConstraintSystem<E1::Base>>(
+  pub(crate) fn enforce_equal<CS: ConstraintSystem<E1::Base>>(
     mut cs: CS,
     a: &AllocatedPoint<E1>,
     b: &AllocatedPoint<E1>,

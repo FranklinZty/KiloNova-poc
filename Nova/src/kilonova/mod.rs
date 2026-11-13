@@ -28,6 +28,7 @@ pub mod family;
 pub mod hfs;
 pub mod ivc;
 pub mod nifs;
+pub mod pcd;
 pub mod relation;
 pub mod span;
 #[cfg(test)]

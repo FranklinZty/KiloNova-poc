@@ -530,7 +530,7 @@ pub(crate) fn bignat_of_bits<F: PrimeField>(bits: &[AllocatedBit]) -> BigNat<F> 
 }
 
 /// Allocates the limbs of a bignat as variables (1 constraint each), for absorption.
-fn bignat_limb_nums<F: PrimeField + PrimeFieldBits, CS: ConstraintSystem<F>>(
+pub(crate) fn bignat_limb_nums<F: PrimeField + PrimeFieldBits, CS: ConstraintSystem<F>>(
   mut cs: CS,
   b: &BigNat<F>,
 ) -> Result<Vec<AllocatedNum<F>>, SynthesisError> {
@@ -850,7 +850,7 @@ pub(crate) struct HfsGadgetOut<F: PrimeField> {
   pub(crate) lambda: Option<Vec<AllocatedNum<F>>>,
 }
 
-fn sum_exprs<F: PrimeField>(xs: impl IntoIterator<Item = Expr<F>>) -> Expr<F> {
+pub(crate) fn sum_exprs<F: PrimeField>(xs: impl IntoIterator<Item = Expr<F>>) -> Expr<F> {
   xs.into_iter().fold(Expr::zero(), |a, x| a.add(&x))
 }
 
@@ -999,7 +999,7 @@ pub(crate) fn verify_hfs<E: Engine, CS: ConstraintSystem<E::Scalar>>(
 }
 
 /// `w_j · x_j` for each j (one constraint each).
-fn weighted<F: PrimeField, CS: ConstraintSystem<F>>(
+pub(crate) fn weighted<F: PrimeField, CS: ConstraintSystem<F>>(
   mut cs: CS,
   w: &[Expr<F>],
   x: &[AllocatedNum<F>],
@@ -1015,7 +1015,7 @@ fn weighted<F: PrimeField, CS: ConstraintSystem<F>>(
 }
 
 /// `Σ_k c_k Π_{j ∈ S_k} vals[j]`.
-fn combine<F: PrimeField, CS: ConstraintSystem<F>>(
+pub(crate) fn combine<F: PrimeField, CS: ConstraintSystem<F>>(
   mut cs: CS,
   tpl: &CcsTemplate<F>,
   vals: &[AllocatedNum<F>],
@@ -1036,7 +1036,7 @@ fn combine<F: PrimeField, CS: ConstraintSystem<F>>(
 
 /// Sum-check verifier: round i checks `p(0) + p(1) = claim` (gated), absorbs the evaluations,
 /// squeezes `r_i` and sets `claim = p(r_i)`. Returns the final claim and the point.
-fn sumcheck<F, RO, CS>(
+pub(crate) fn sumcheck<F, RO, CS>(
   mut cs: CS,
   ro: &mut RO,
   claim: Expr<F>,
