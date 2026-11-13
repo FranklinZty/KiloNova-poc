@@ -1340,11 +1340,12 @@ fn test_tree_layout_dummy_rule() {
 // 64 leaves, every arity (long; run explicitly)
 // ---------------------------------------------------------------------------------------------
 
-fn tree64(a: usize, seed: u64) -> RootStatement<F> {
+fn tree64<V: IvcVariant<E1>>(a: usize, seed: u64) -> RootStatement<F> {
   let (leaf, ids) = leaf_family();
-  let (pp, rep) = Pp::setup(&leaf, &ids, a, PrimaryTemplate::R1cs).unwrap();
+  let (pp, rep) = TreeParams::<E1, E2, V>::setup(&leaf, &ids, a, PrimaryTemplate::R1cs).unwrap();
   println!(
-    "[tree64] a={a}: m = {}, CycleFold inputs {}, iterations {}",
+    "[tree64] {} a={a}: m = {}, CycleFold inputs {}, iterations {}",
+    V::NAME,
     rep.primary_m,
     pp.cyclefold_num_inputs(),
     rep.iterations.len()
@@ -1358,21 +1359,32 @@ fn tree64(a: usize, seed: u64) -> RootStatement<F> {
 }
 
 /// 64 fixed real leaf tasks (mixed predicates): every supported arity proves and verifies the
-/// same target result R (the tree hashes differ with the shape).
+/// same target result R (the tree hashes differ with the shape). Supported: Direct a = 2, 4 and
+/// Span a = 8; Direct a = 8 is rejected by setup (its merge circuit exceeds
+/// `MAX_SETUP_CONSTRAINTS`, which is not raised).
 #[test]
-#[ignore = "long: 64-leaf trees for a = 2, 4, 8 (run explicitly)"]
+#[ignore = "long: 64-leaf trees for a = 2, 4 (Direct) and 8 (Span) (run explicitly)"]
 fn test_tree_64_leaves_all_arities() {
   let task = TreeTask::<F>::generate(101, 64, 2);
-  let (leaf, _) = leaf_family();
+  let (leaf, ids) = leaf_family();
   let r = task.expected_result(eval(&leaf));
-  let mut results = Vec::new();
-  for a in [2usize, 4, 8] {
-    let st = tree64(a, 101);
+  let mut hashes = Vec::new();
+  for (a, direct) in [(2usize, true), (4, true), (8, false)] {
+    let st = if direct {
+      tree64::<Direct>(a, 101)
+    } else {
+      tree64::<Span>(a, 101)
+    };
     assert_eq!(st.result, r, "a = {a}");
-    assert_eq!((st.lo, st.hi, st.num_leaves), (0, 64, 64));
-    results.push(st.tree_hash);
+    assert_eq!((st.lo, st.hi, st.num_leaves, st.arity), (0, 64, 64, a));
+    hashes.push(st.tree_hash);
   }
-  assert_ne!(results[0], results[1]);
+  assert_ne!(hashes[0], hashes[1]);
+  assert_ne!(hashes[1], hashes[2]);
+  match TreeParams::<E1, E2, Direct>::setup(&leaf, &ids, 8, PrimaryTemplate::R1cs) {
+    Ok(_) => panic!("a = 8 Direct is expected to exceed MAX_SETUP_CONSTRAINTS"),
+    Err(e) => assert_eq!(e.layer(), TreeLayer::Setup),
+  }
 }
 
 /// Only a = 2 at 64 leaves (the mandatory configuration).
@@ -1381,6 +1393,6 @@ fn test_tree_64_leaves_all_arities() {
 fn test_tree_64_leaves_a2() {
   let task = TreeTask::<F>::generate(101, 64, 2);
   let (leaf, _) = leaf_family();
-  let st = tree64(2, 101);
+  let st = tree64::<Direct>(2, 101);
   assert_eq!(st.result, task.expected_result(eval(&leaf)));
 }
