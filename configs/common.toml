@@ -45,6 +45,21 @@ digest           = "SHA3-256 -> 250-bit field element over (version, label, arit
 k_max_fixture    = 16         # ivc::fixtures::MAX_CHAIN_K
 templates        = ["R1CS (t=3, d=2)", "R1CS + native power rows (t=5, d=5)"]
 
+[pcd]                         # P6, Nova/src/kilonova/pcd, docs/protocol-spec.md section 11
+version          = 1          # pcd::PCD_VERSION (link hash, tree hash, tree CycleFold accumulator layout)
+family           = "[leaf/0 .. leaf/(K_leaf-1), merge, dummy]; K = K_leaf + 2; leaf members = P4 chain members (default K_leaf = 2)"
+mu_nu_vs_a       = "merge: mu = a running + nu = a incoming per HFS fold (mu + nu = 2a, never a); leaf/dummy: mu = nu = 0 (base case, no verifier); chain (section 9): a = 1, mu = nu = 1"
+arity_a          = [2, 4, 8]  # a = 2 mandatory; 4, 8 stretch (see docs/P6-report.md for what ran)
+leaves_L         = 64         # W4 default; small trees L = 4, 5, 6 in the tests
+cyclefold        = "multi-input: rho, [k_0..k_{nu-1}], W_0..W_{mu+nu-1}, W_out, (M_0[j]..M_{mu-1}[j], M_out[j])_j; Horner with the 128-bit rho; Direct a = 2: 31 inputs"
+cyclefold_folds  = "a - 1 relaxed-relaxed folds (tag 0x4b4e434600020001) + 1 fresh fold (tag 0x4b4e434600020002); u and X as 4 x 64-bit limbs"
+tags             = ["0x4b4e504344010001 (link)", "0x4b4e504344010002 (leaf)", "0x4b4e504344010003 (node)", "0x4b4e504344010004 (dummy)"]
+target_result    = "R = sum_p beta^p F_{k_p}(x_p), beta = 7"
+range_bits       = 32         # positions, L, widths range-checked in-circuit
+dummy_rule       = "maximal padding subtrees beyond L (lo >= L, parent lo < L), one dummy proof each"
+root_verifier    = "verify_root(pp) -> (task_id, L, a, [0, a^d), R, tree hash); layers Input, Statement, LinkHash, Decider, CycleFold, RootIncoming"
+main_threads     = 1          # main records single-threaded; parallel-latency records separately labelled (experiment p6-tree-parallel)
+
 [setup]
 max_iterations   = 12         # kilonova::MAX_SETUP_ITERATIONS
 max_constraints  = 1048576    # kilonova::MAX_SETUP_CONSTRAINTS (2^20)

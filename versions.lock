@@ -15,6 +15,8 @@ p5_branch           = "p5-recursion"                 # P5 (from 4e8665b): kilono
 p4_branch           = "p4-family"                    # P4 (from p5-recursion 1b47d39): kilonova::family (PredicateFamily, index-span paths), ivc::program (phi), IVC_VERSION = 2 (spec §9.8, §10); commits in docs/P4-report.md; no new dependencies, root Cargo.lock unchanged
 ivc_version         = 2                             # Nova/src/kilonova/ivc/mod.rs IVC_VERSION (link hash, trace chain, CycleFold layout); 1 = P5, 2 = P4 (family digest, phi, trace recovery)
 family_version      = 1                             # Nova/src/kilonova/family FAMILY_VERSION (family digest layout; member encoding = kn_ccs::encode "KNCCS\x01")
+pcd_version         = 1                             # Nova/src/kilonova/pcd PCD_VERSION (P6 tree PCD: link/tree hash tags 0x4b4e5043440100xx, tree CycleFold accumulator with u as limbs)
+p6_branch           = "p6-pcd"                       # P6 (from origin/master 9273d60): kilonova::pcd (tree PCD, mu = nu = a), kn-scenario tree; commits in docs/P6-report.md; no new dependencies, root Cargo.lock unchanged
 
 [toolchain]
 pinned              = "1.92.0"                      # rust-toolchain.toml; measured in docs/P0-plan.md
