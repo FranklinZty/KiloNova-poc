@@ -128,7 +128,7 @@ Run on `p6-pcd` at `f11f559` plus the clippy rename and these docs (2026-11-14, 
 | `cargo fmt --all --check` | clean |
 | clippy (`-p kn-ccs -p kn-run -p nova-snark --release --all-targets -- -W clippy::all -A clippy::len_without_is_empty`) | clean (only the pre-existing workspace `resolver` warning) |
 | kilonova suite (`--release --lib kilonova -- --test-threads=1`) | **109 passed, 0 failed, 10 ignored** (1,592 s, peak RSS 3.0 GiB). Master baseline was 95 / 8; the 14 new tests are in `pcd::tests`; the 10 ignored are the 4 v1 B15 tests, the v1 perf harness, the 3 long P4/P5 chains and the 2 long 64-leaf tree tests below |
-| long tests, run explicitly (`--ignored`): `test_ivc_chain_t64_direct`, `test_ivc_chain_span_long`, `test_ivc_chain_k16`, `test_tree_64_leaves_all_arities`, `test_tree_64_leaves_a2` | @@LONG@@ |
+| long tests, run explicitly (`--ignored`): `test_ivc_chain_t64_direct`, `test_ivc_chain_span_long`, `test_ivc_chain_k16`, `test_tree_64_leaves_all_arities`, `test_tree_64_leaves_a2` | **5 passed** (2,938 s, peak RSS 3.6 GiB) |
 | `cargo test -p nova-snark --release --lib nova::tests::test_ -- --test-threads=1` | 11 passed, 2 ignored |
 | `cargo test -p kn-ccs --release` | 21 passed |
 | `cargo test -p kn-run --release -- --test-threads=1` | 10 passed |
