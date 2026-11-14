@@ -8,7 +8,7 @@
 use super::{
   check_cyclefold, check_index, check_matrix_eval, check_witness_opening, compress_chain,
   compress_tree, eq_table,
-  format::{self, account, decode, encode, encode_head, Dims, NUM_SECTIONS, SECTIONS},
+  format::{self, account, decode, encode, encode_head, Dims, SECTIONS},
   reference_basis_eval, verify_final_chain, verify_final_tree, verify_final_tree_statement,
   CompressError, CompressLayer, CompressorKey, FinalStatement, FinalVariant, FinalVerifierKey,
   ProofKind, E1, E2, F1,
@@ -960,14 +960,14 @@ fn test_compress_rejects_byte_tampering() {
     let mut positions: Vec<usize> = (0..format::HEADER_BYTES).collect();
     let mut off = format::HEADER_BYTES;
     let mut per_section = Vec::new();
-    for i in 0..NUM_SECTIONS {
+    for name in SECTIONS {
       positions.extend(off..off + format::FRAMING_BYTES);
       let len = u32::from_le_bytes(bytes[off + 1..off + 5].try_into().unwrap()) as usize;
       let p0 = off + format::FRAMING_BYTES;
       if len > 0 {
         positions.extend([p0, p0 + len / 2, p0 + len - 1]);
       }
-      per_section.push((SECTIONS[i], p0, len));
+      per_section.push((name, p0, len));
       off = p0 + len;
     }
     assert_eq!(off, bytes.len());

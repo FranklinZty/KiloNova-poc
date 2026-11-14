@@ -41,7 +41,7 @@ Status legend: ✅ checked, ⏩ deferred to a later layer by design, ❌ gap.
 | # | Gap | Status | Moved to |
 |---|---|---|---|
 | G1 | In-circuit M not bound to λ | **Closed by design.** The binding is a decider check (above). The old circuit allocated λ as an unconstrained witness, which neither bound it nor was needed. | — |
-| G2 | Verifier needs private witnesses; no CompressedSNARK | Open; same as Nova's uncompressed `RecursiveSNARK` | P7 (P7a reference-basis decider) |
+| G2 | Verifier needs private witnesses; no CompressedSNARK | **Closed by P7a for the v2 chain and tree (2026-11-14)**: `compress::verify_final_{chain,tree}` read only the public material and the proof (§9). The uncompressed `verify`/`verify_root` still read witnesses and are kept. The verifier is a **reference-basis decider** (O(K·N) in the index); P7b (sparse holographic evaluation) is not done. v1 unchanged. | P7b (not started) |
 | G3 | Predicate trace supplied to the verifier | **Closed for the v2 recursion (P4)**: `ivc::RecursiveSNARK::verify(pp, n, z_0)` takes no schedule and returns the trace hash recovered from the proof; `verify_schedule` only compares it. v1 unchanged (historical). | P6 (trees) |
 | G4 | No in-circuit φ; id is a host constant | **Closed for the v2 recursion (P4)**: every primary circuit evaluates the program's φ on its input state and enforces `φ(i, z_i) = k` (`ivc::program`). v1 unchanged (historical). | — |
 | G5 | Direct and Span differ in security: Span makes λ public (O(K) public state); its decider has no comm_M check | Documented; Span folds λ in-circuit with field additions only (no group operations) | Ablation interpretation in P8/P9 (PLAN §8, item 3) |
@@ -146,3 +146,23 @@ Spec: `docs/protocol-spec.md` §11. Layers are `pcd::TreeLayer` (Input, Setup, P
 | Forged predecessors (child statement, child proof, child accumulators) rejected; tampered root statement/accumulators rejected | merge circuit (link hash, HFS sum-check); root verifier | Circuit → RootIncoming; LinkHash, Statement, Decider, CycleFold | `test_tree_rejects_forged_predecessor` | ✅ |
 | Same input at different positions is valid; same position twice is not | tree hash / β^p include p; ranges | — | `test_tree_same_input_different_positions` + duplicate test | ✅ |
 | Merge circuit is succinct (independent of members' wiring, below the family nnz); breakdown disjoint | CountingCS, `node_breakdown` | — | `test_merge_circuit_breakdown_and_succinctness` | ✅ |
+
+## 9. Compression and final verification (P7a, `kilonova::compress`, reference-basis decider)
+
+Terminal-check map of `verify-final` (spec §12.5), in order. Every row is checked without a witness. "File" = the tamper is applied to the proof bytes (decode, change, canonical re-encode, or raw byte flips); "API" = the terminal check is called directly on a moved folded instance `U*` (defence in depth: the earlier layer would already reject the file).
+
+| # | Claim | Checker | Layer | Tests | Status |
+|---|---|---|---|---|---|
+| 0 | Material is the pinned family and CycleFold shape (member encodings canonical, digests recomputed, pp digest = setup record) | `format::read_material`, `FinalVerifierKey::from_parts` | Material | `test_compress_rejects_family` (substituted matrix entry, pinned), `compress_cli_checkpoint_deleted_*` (other pinned digest), Span verifier on Direct material | ✅ |
+| 1 | Proof bytes are the canonical v1 encoding for this material | `format::decode` (lengths from `Dims`, canonical scalars, valid points, exact consumption, re-encode equality) | Format | `test_compress_rejects_byte_tampering` (every header/framing byte, 3 bytes per section, 2 bits each; truncations; extension; forged short/long/huge lengths; non-canonical scalar), chain proof to a tree verifier | ✅ |
+| 2 | The proof is for these parameters and this family | `check_binding` | Binding | `test_compress_rejects_family` (pp digest, family digest, verifier of a substituted family) | ✅ |
+| 3 | Statement: chain n and z_0 as expected; tree a, L range, `[0, a^d)`, expected root statement | `verify_final_chain_proof`, `verify_final_tree_proof`, `verify_final_tree_statement` | Statement | `test_compress_rejects_statement_and_output` | ✅ |
+| 4 | Final output and recursive output binding: `u_n.io[0] = H_link(pp, family, S, U_n, cfU_n)` (z_n, trace, n, R, h, L, task id, U_n, cfU_n) | `chain_link_hash` / `tree_link_hash` | LinkHash | `test_compress_rejects_statement_and_output`, `test_compress_rejects_recursive_output_binding`, Span λ in `U_n` (`test_compress_rejects_span_and_index`), running r_y / v (`test_compress_rejects_evaluation_point_and_value`) | ✅ |
+| 5 | The last CCCS folds into `U_n` (final fold; binds u_n's id and commitment, produces the evaluation point (r_x*, r_y*) and values v*) | `NIFS::verify` (HFS v2, μ = ν = 1) | FinalFold | X/Y round messages, ε, θ, incoming comm_W and id | ✅ |
+| 6 | Direct: `comm_M*[j] = Com(ck_index_j, λ*)` | `FinalVariant::lambda_star` | IndexOpening | revealed λ* tampered (file), swapped λ* (API) | ✅ |
+| 7 | `Σ_k λ*_k M̃_{k,j}(r_x*, r_y*) = v*_j` over every base matrix | `reference_basis_eval`, `check_matrix_eval` | MatrixEval | moved r_x*, r_y*, v*_1, Span λ* (API); `test_reference_basis_eval_matches_weighted_path` | ✅ |
+| 8 | `comm_W*` opens to a with `⟨a, b_mask(r_y*)⟩ = v*_t − public part` (masked: no tail shift) | IPA, `check_witness_opening` | WitnessOpening | IPA â tampered (file); moved r_y*, v*_t, io*, other head digest (API); `test_masked_opening_closes_tail_shift` | ✅ |
+| 9 | CycleFold accumulator `cfU_n` satisfied | Spartan `RelaxedR1CSSNARK<E2, IPA>` | CycleFold | eval_W flipped (file), Spartan proof against another cfU (API) | ✅ |
+| — | Verifier inputs contain no witness; checkpoint deleted | type inventory, file-only verifier | — | `test_verifier_inputs_have_no_witness`, `test_compress_file_roundtrip_checkpoint_deleted`, kn-run `compress_cli_checkpoint_deleted_{chain,tree}` (separate processes, `private/` deleted) | ✅ |
+| — | Proof bytes item by item = file length; K enters only through λ | `format::account`, `Dims::section_bytes` | — | `test_proof_account_matches_file` | ✅ |
+| — | Sparse holographic evaluation with terminal recursive binding (paper's optimisation) | — | — | — | ❌ **P7b not implemented** |

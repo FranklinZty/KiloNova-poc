@@ -1786,6 +1786,7 @@ mod compress {
 
   /// The chain's public input: app state from the seed, schedule (every member once, then
   /// seeded), z_0 = (app, program register).
+  #[allow(clippy::type_complexity)]
   fn chain_input(c: &Cfg) -> Result<(ChainProg, Vec<F1>, Vec<F1>, Vec<usize>), String> {
     let prog = ChainPredicates::<F1>::new(c.k, false).program();
     let mut rng = ChaCha20Rng::seed_from_u64(c.seed);
