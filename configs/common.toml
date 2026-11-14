@@ -60,6 +60,19 @@ dummy_rule       = "maximal padding subtrees beyond L (lo >= L, parent lo < L), 
 root_verifier    = "verify_root(pp) -> (task_id, L, a, [0, a^d), R, tree hash); layers Input, Statement, LinkHash, Decider, CycleFold, RootIncoming"
 main_threads     = 1          # main records single-threaded; parallel-latency records separately labelled (experiment p6-tree-parallel)
 
+[compress]                    # P7a, docs/protocol-spec.md section 12
+version          = 1          # kilonova::compress::COMPRESS_VERSION
+decider          = "reference-basis-decider"   # verifier evaluates every base matrix M~_{k,j}(r_x*, r_y*): O(K*N) in the index
+p7b              = "not implemented"           # no sparse holographic (Spark-style) evaluation
+last_incoming    = "native final HFS v2 fold (mu = nu = 1) into the running ACCS"
+index_path       = "weighted (reference basis); Direct reveals lambda* and re-commits it"
+z_opening        = "IPA on E1 with the eq vector masked to the first num_w entries (key kn-hfs-v2-ck extended to 2^s')"
+cyclefold        = "Spartan RelaxedR1CSSNARK<E2, IPA<E2>> (spartan/snark.rs, non-preprocessing)"
+transcript       = "keccak E1::TE label kn-compress-v1, TAG_COMPRESS = 0x4b4e_4350_0001_0001, absorbs pp digest and head digest"
+proof_format     = "KNCP v1: 10-byte header + 9 sections (tag u8, len u32), canonical; see format::Dims"
+material_format  = "KNVM v1: header (bincode) + K canonical member encodings"
+records          = "results/raw/p7-compress.jsonl (steps compress-setup / compress-prove / compress-verify mode=cold|warm, threads 1)"
+
 [setup]
 max_iterations   = 12         # kilonova::MAX_SETUP_ITERATIONS
 max_constraints  = 1048576    # kilonova::MAX_SETUP_CONSTRAINTS (2^20)
@@ -71,7 +84,7 @@ num_hash_bits      = 250
 bn_limb_width      = 64
 bn_n_limbs         = 4
 witness_commitment = "Pedersen (provider::pedersen)"
-pcs                = "IPA (provider::ipa_pc::EvaluationEngine), single-step test only"
+pcs                = "IPA (provider::ipa_pc): P7a masked z opening on E1 and Spartan RelaxedR1CSSNARK + IPA on E2 (compression only; witness commitments stay Pedersen)"
 ro                 = "Poseidon with domain tags (transcript.rs)"
 zero_knowledge     = false
 

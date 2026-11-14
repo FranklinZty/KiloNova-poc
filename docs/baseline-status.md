@@ -39,7 +39,7 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | B3 | Circuit size feedback through `eval_z` / `eval_matrix_folded` | **Fixed**: the recomputations were removed from the gadget |
 | B4 | U1 and ι′ not in the transcript | **Fixed** at all 4 sites, with domain tags. `test_nifs_rejects_substituted_running_instance` fails on the old code and passes on the new. |
 | B5 | In-circuit M not bound to commit(λ) (G1) | **Closed by design**: decider check (`docs/claim-check-map.md` §3) |
-| B6 | No CompressedSNARK; verify needs witnesses (G2) | Deferred to **P7** |
+| B6 | No CompressedSNARK; verify needs witnesses (G2) | **Closed by P7a (2026-11-14) for the v2 chain and tree, as the intermediate `reference-basis-decider` only.** `kilonova::compress` (`docs/P7-report.md`, spec §12): the last CCCS is folded natively into the running ACCS (one more HFS v2 fold), Direct reveals λ* and the verifier re-commits it, the verifier evaluates every base matrix itself (O(K·N) in the index), a masked IPA opens `comm_W*` for the z claim, Spartan (IPA) proves the CycleFold accumulator; `verify_final_{chain,tree}` read only the public material file and the proof file (separate-process test with the prover checkpoint deleted). **P7b (sparse holographic evaluation) not implemented, so P7 is not done.** The uncompressed `verify`/`verify_root` are unchanged. |
 | B7 | No in-circuit φ; trace supplied to verifier (G3/G4) | **Closed for the v2 recursion (P4, 2026-11-10).** N15: the trace is a Poseidon chain computed in-circuit over each circuit's constant id (P5). G4: every primary circuit evaluates the program's selection function φ on its input state and enforces `φ(i, z_i) = k` (`ivc::program`, spec §9.8). G3: `ivc::RecursiveSNARK::verify(pp, n, z_0)` takes no schedule and returns the trace hash recovered from the proof; `verify_schedule` only compares it with an expected schedule (`docs/P4-report.md`). The v1 path is unchanged (historical, B15): it still takes the trace and uses the algebraic digest. P6 (2026-11-14) extends the binding to trees: tree hash over positions, ranges, ids and inputs, in-circuit ranges, task id in every link hash; `pcd::NodeProof::verify_root` takes no tree structure (`docs/P6-report.md`). |
 | B8 | NIFS unit tests only fold predicates with identical coefficients | **Closed in P3 for the v2 HFS**: `hfs::tests::test_chain_100_{r1cs,power5}_{direct,span}` fold two predicates with different wiring, negative coefficients and wrapping values for 100 alternating steps, every step accepted by the verifier, the decider and the kn-ccs oracle. The v1 unit tests are unchanged. |
 | B9 | `test_cross_predicate_fold_sat` drops sigmas and never calls is_sat | **Superseded in P3** by the v2 cross-predicate tests (real NIFS, decider and oracle on every fold: the chain tests, `test_mu_nu_combinations`, `proptest_random_ccs_fold`). The v1 test itself is unchanged (v1 is frozen until P5). |
@@ -109,6 +109,16 @@ The P0 fix makes the gadget succinct. The bucket-table change (`new_for_setup` w
 | `kilonova::pcd::tests::test_tree_rejects_{duplicate_leaf,missing_leaf,cross_task_splice,swapped_children,forged_predecessor}` | rejection suite with detection layers |
 | `kilonova::pcd::tests::test_merge_circuit_breakdown_and_succinctness` | breakdown, succinctness of the merge circuit |
 | `kilonova::pcd::tests::test_tree_64_leaves_{all_arities,a2}` (ignored, run explicitly) | 64 leaves: same R for Direct a = 2, 4 and Span a = 8; Direct a = 8 rejected at Setup |
+
+## 5f. Tests added in P7a (compression, `docs/P7-report.md`)
+
+| Test | Purpose |
+|---|---|
+| `compress::tests::test_compress_{chain,tree}_{direct,span}`, `test_compress_base_cases` | compress → proof file → `verify-final` from the material file; canonical round trip; length formula; L = 1 tree and one-step chain |
+| `test_compress_file_roundtrip_checkpoint_deleted`, kn-run `compress_cli_checkpoint_deleted_{chain,tree}` | prover state and checkpoint deleted; separate processes through files |
+| `test_verifier_inputs_have_no_witness` | proof item inventory, element count far below num_w, verifier from material alone |
+| `test_compress_rejects_{family,statement_and_output,recursive_output_binding,span_and_index,evaluation_point_and_value,openings,byte_tampering}` | every binding with its detection layer (`CompressLayer`) |
+| `test_proof_account_matches_file`, `test_reference_basis_eval_matches_weighted_path`, `test_masked_opening_closes_tail_shift` | byte account = file length; reference basis = weighted path; masked z opening |
 
 ## 6. Reproduce
 

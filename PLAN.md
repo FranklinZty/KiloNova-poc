@@ -2,7 +2,7 @@
 
 Version: 2026-10-05 (revision 2). Supersedes the 2026-09-21 plan, whose original Chinese text is kept in `docs/PLAN.zh.md`.
 
-Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3.0 decision memo 2026-11-03 (`docs/P3.0-decision.md`); **D1 decided (a), Nova fork + CycleFold, 2026-11-09**. P3 executed 2026-11-08 for native folding (`docs/P3-report.md`). P5 executed 2026-11-09 (`docs/P5-report.md`): multi-step non-uniform recursion on HFS v2 with CycleFold. P4 executed 2026-11-10 (`docs/P4-report.md`): `PredicateFamily`, in-circuit φ, verifier without a schedule (G3, G4 closed for v2), index-span cross-checks and support-growth records. P6 executed 2026-11-14 (`docs/P6-report.md`): tree PCD (`kilonova::pcd`) with μ = ν = a merges, a = 2 (mandatory) and a = 4 (Direct), a = 8 (Span only; Direct exceeds the setup cap), 64-leaf W4 trees, rejection suite. P7–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
+Status: P0 executed (see §0 and `docs/baseline-status.md`). P1 executed 2026-10-07 (`docs/P1-report.md`). P2 executed 2026-10-20 (`docs/P2-report.md`). P3.0 decision memo 2026-11-03 (`docs/P3.0-decision.md`); **D1 decided (a), Nova fork + CycleFold, 2026-11-09**. P3 executed 2026-11-08 for native folding (`docs/P3-report.md`). P5 executed 2026-11-09 (`docs/P5-report.md`): multi-step non-uniform recursion on HFS v2 with CycleFold. P4 executed 2026-11-10 (`docs/P4-report.md`): `PredicateFamily`, in-circuit φ, verifier without a schedule (G3, G4 closed for v2), index-span cross-checks and support-growth records. P6 executed 2026-11-14 (`docs/P6-report.md`): tree PCD (`kilonova::pcd`) with μ = ν = a merges, a = 2 (mandatory) and a = 4 (Direct), a = 8 (Span only; Direct exceeds the setup cap), 64-leaf W4 trees, rejection suite. P7a executed 2026-11-14 (`docs/P7-report.md`): compression and independent final verification with the intermediate `reference-basis-decider` for chains and trees (a = 2), Direct and Span; **P7b (sparse holographic evaluation) not implemented, so P7 is not marked done**. P8–P10 not started. This file is a plan. Statements about the code are backed by the commands and tests named in the P0 reports. Nothing here is a performance or security claim.
 
 ## 0. What changed in this revision, and why
 
@@ -206,7 +206,7 @@ Acceptance:
 - Total sequential CPU work and parallel wall-clock latency are reported separately. The main single-threaded results never mix in parallel gains.
 - The mapping between multi-input folding μ/ν and PCD arity is written into every configuration. Never assume a = μ + ν.
 
-### P7: Independent final verification and compression (10–20 days; depends on P5; tree coverage depends on P6)
+### P7: Independent final verification and compression (P7a done 2026-11-14; P7b not started, so P7 is **not** done; 10–20 days; depends on P5; tree coverage depends on P6)
 
 Goal: a final verifier that depends only on declared public material and the proof, with no prover-private state. Today `RecursiveSNARK::verify` needs the folded witnesses (G2), as Nova's uncompressed `RecursiveSNARK` does.
 
@@ -514,6 +514,8 @@ Current status (2026-11-14):
 | P5 | **Done** for the stated scope (D1 (a); Direct and Span; native d = 5 row in the loop; uncompressed; minimal P4 only; no independent review yet) | `docs/P5-report.md`; kilonova suite → 76 passed, 7 ignored (4 × v1 B15, 1 perf harness, 2 long P5 chains run explicitly: 2 passed); `results/raw/p5-ivc.jsonl` (22 records: K ∈ {2,4} × T ∈ {1,16,64} × 3 seeds Direct, plus Span and pow5); B15 fixed for recursion (v1 path kept, still broken) |
 | P4 | **Done** for the stated scope (family digest, φ, trace recovery, span cross-checks K ∈ {1,2,4,16}, K = 16 chain; no independent review yet) | `docs/P4-report.md`; kilonova suite → 95 passed, 8 ignored (4 × v1 B15, 1 perf harness, 3 long chains run explicitly: 3 passed); kn-ccs 21, kn-run 10; `results/raw/p4-family.jsonl` (30 records) |
 | P6 | **Done** for a = 2 (mandatory), a = 4 (Direct) and a = 8 (Span only; Direct a = 8 exceeds the setup cap); uncompressed; no independent review yet | `docs/P6-report.md`; kilonova suite → 109 passed, 10 ignored (4 × v1 B15, 1 perf harness, 3 long chains, 2 long trees run explicitly); kn-ccs 21, kn-run 10; `results/raw/p6-tree.jsonl` (13 records: L = 64, seeds 101/202/303, same R for every a; padding record L = 50; Direct a = 8 setup failure) + `p6-tree-parallel.jsonl` (1, labelled) |
-| P7–P10 | Not started | — |
+| P7a | **Done** (`reference-basis-decider`; chain and tree a = 2, Direct and Span; separate-process verify with the checkpoint deleted; no independent review yet) | `docs/P7-report.md`; kilonova suite → see the report; `kilonova::compress` 17 tests; kn-run 12 (10 + 2 separate-process tests); `results/raw/p7-compress.jsonl` |
+| P7b | **Not started** (no sparse holographic evaluation, no terminal recursive binding of row/col/val encodings). P7 as a whole is therefore **not done** (PLAN P7, last acceptance item) | — |
+| P8–P10 | Not started | — |
 
 A status changes only on the commands, results and versions in an acceptance report. Creating or revising this plan does not mean prototype code, tests or experiments have been executed beyond what the P0 reports show.

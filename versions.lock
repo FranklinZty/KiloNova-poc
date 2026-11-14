@@ -16,6 +16,7 @@ p4_branch           = "p4-family"                    # P4 (from p5-recursion 1b4
 ivc_version         = 2                             # Nova/src/kilonova/ivc/mod.rs IVC_VERSION (link hash, trace chain, CycleFold layout); 1 = P5, 2 = P4 (family digest, phi, trace recovery)
 family_version      = 1                             # Nova/src/kilonova/family FAMILY_VERSION (family digest layout; member encoding = kn_ccs::encode "KNCCS\x01")
 pcd_version         = 1                             # Nova/src/kilonova/pcd PCD_VERSION (P6 tree PCD: link/tree hash tags 0x4b4e5043440100xx, tree CycleFold accumulator with u as limbs)
+compress_version    = 1                             # Nova/src/kilonova/compress COMPRESS_VERSION (P7a reference-basis-decider: proof format v1 "KNCP", material file "KNVM", compression transcript kn-compress-v1, TAG_COMPRESS 0x4b4e435000010001); P7b not implemented
 p6_branch           = "p6-pcd"                       # P6 (from origin/master 9273d60): kilonova::pcd (tree PCD, mu = nu = a), kn-scenario tree; commits in docs/P6-report.md; no new dependencies, root Cargo.lock unchanged
 
 [toolchain]
