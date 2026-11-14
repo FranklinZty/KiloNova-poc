@@ -9,9 +9,9 @@ use super::{
   check_cyclefold, check_index, check_matrix_eval, check_witness_opening, compress_chain,
   compress_tree, eq_table,
   format::{self, account, decode, encode, encode_head, Dims, NUM_SECTIONS, SECTIONS},
-  reference_basis_eval, verify_final_chain, verify_final_tree,
-  verify_final_tree_statement, CompressError, CompressLayer,
-  CompressorKey, FinalStatement, FinalVariant, FinalVerifierKey, ProofKind, E1, E2, F1,
+  reference_basis_eval, verify_final_chain, verify_final_tree, verify_final_tree_statement,
+  CompressError, CompressLayer, CompressorKey, FinalStatement, FinalVariant, FinalVerifierKey,
+  ProofKind, E1, E2, F1,
 };
 use crate::{
   kilonova::{
@@ -24,12 +24,7 @@ use crate::{
   traits::{commitment::CommitmentEngineTrait, Engine},
 };
 use ff::Field;
-use std::{
-  fs,
-  io::BufReader,
-  path::PathBuf,
-  sync::OnceLock,
-};
+use std::{fs, io::BufReader, path::PathBuf, sync::OnceLock};
 
 fn tmp_dir(name: &str) -> PathBuf {
   let d = std::env::temp_dir().join(format!("kn-p7-{}-{name}", std::process::id()));
@@ -60,7 +55,10 @@ struct Fx<V: FinalVariant> {
   num_w: usize,
 }
 
-fn vk_from_file<V: FinalVariant>(path: &PathBuf, expected: Option<F1>) -> Result<FinalVerifierKey<V>, CompressError> {
+fn vk_from_file<V: FinalVariant>(
+  path: &PathBuf,
+  expected: Option<F1>,
+) -> Result<FinalVerifierKey<V>, CompressError> {
   let f = fs::File::open(path).unwrap();
   FinalVerifierKey::<V>::read_material(&mut BufReader::new(f), expected)
 }
@@ -186,17 +184,29 @@ fn verify<V: FinalVariant>(fx: &Fx<V>, bytes: &[u8]) -> Result<(), CompressError
   match &fx.public {
     Public::Chain { n, z0, out } => {
       let got = verify_final_chain(&fx.vk, bytes, *n, z0)?;
-      assert_eq!(&got, out, "verify-final returns what the uncompressed verifier returns");
+      assert_eq!(
+        &got, out,
+        "verify-final returns what the uncompressed verifier returns"
+      );
       Ok(())
     }
     Public::Tree { expected } => verify_final_tree_statement(&fx.vk, bytes, expected).map(|_| ()),
   }
 }
 
-fn expect_layer<T: std::fmt::Debug>(res: Result<T, CompressError>, layer: CompressLayer, what: &str) {
+fn expect_layer<T: std::fmt::Debug>(
+  res: Result<T, CompressError>,
+  layer: CompressLayer,
+  what: &str,
+) {
   match res {
     Ok(v) => panic!("{what}: accepted ({v:?})"),
-    Err(e) => assert_eq!(e.layer(), layer, "{what}: rejected at {:?} ({e})", e.layer()),
+    Err(e) => assert_eq!(
+      e.layer(),
+      layer,
+      "{what}: rejected at {:?} ({e})",
+      e.layer()
+    ),
   }
 }
 
@@ -432,7 +442,10 @@ fn test_reference_basis_eval_matches_weighted_path() {
   let lambda = &fx.w_star.lambda;
   let w = weighted_eval(fx.vk.hfs().shapes(), lambda, &u.r_x, &u.r_y);
   for j in 0..fx.vk.hfs().t() {
-    let v = evals.iter().zip(lambda).fold(F1::ZERO, |a, (e, l)| a + *l * e[j]);
+    let v = evals
+      .iter()
+      .zip(lambda)
+      .fold(F1::ZERO, |a, (e, l)| a + *l * e[j]);
     assert_eq!(v, w[j]);
     assert_eq!(v, u.v[j]);
   }
@@ -476,8 +489,12 @@ fn test_compress_rejects_family() {
   members[1] = (tpl.clone(), sh2);
   assert_ne!(encode_member(&tpl, &members[1].1), encode_member(&tpl, &sh));
   expect_layer(
-    FinalVerifierKey::<Direct>::from_parts(header.clone(), members.clone(), Some(fx.vk.pp_digest()))
-      .map(|_| ()),
+    FinalVerifierKey::<Direct>::from_parts(
+      header.clone(),
+      members.clone(),
+      Some(fx.vk.pp_digest()),
+    )
+    .map(|_| ()),
     CompressLayer::Material,
     "substituted member, pinned digest",
   );
@@ -511,9 +528,7 @@ fn test_compress_rejects_statement_and_output() {
   let Public::Chain { n, z0, .. } = &fx.public else {
     unreachable!()
   };
-  let chain = |f: fn(&mut FinalStatement)| {
-    tampered(fx, |p| f(&mut p.head.statement))
-  };
+  let chain = |f: fn(&mut FinalStatement)| tampered(fx, |p| f(&mut p.head.statement));
   expect_layer(
     chain(|s| {
       if let FinalStatement::Chain { zn, .. } = s {
@@ -657,7 +672,9 @@ fn test_compress_rejects_recursive_output_binding() {
       "running u",
     );
     expect_layer(
-      tampered(fx, |p| p.head.running.comm_w = p.head.running.comm_w + p.head.running.comm_w),
+      tampered(fx, |p| {
+        p.head.running.comm_w = p.head.running.comm_w + p.head.running.comm_w
+      }),
       CompressLayer::LinkHash,
       "running comm_W",
     );
@@ -774,7 +791,11 @@ fn test_compress_rejects_evaluation_point_and_value() {
     check_witness_opening(&fx.vk, &head, &fx.u_star, &p.w_open).unwrap();
     let mut u = fx.u_star.clone();
     u.r_y[3] += F1::ONE;
-    expect_layer(check_matrix_eval(&fx.vk, &u, &lam), CompressLayer::MatrixEval, "moved r_y*");
+    expect_layer(
+      check_matrix_eval(&fx.vk, &u, &lam),
+      CompressLayer::MatrixEval,
+      "moved r_y*",
+    );
     expect_layer(
       check_witness_opening(&fx.vk, &head, &u, &p.w_open),
       CompressLayer::WitnessOpening,
@@ -782,10 +803,18 @@ fn test_compress_rejects_evaluation_point_and_value() {
     );
     let mut u = fx.u_star.clone();
     u.r_x[0] += F1::ONE;
-    expect_layer(check_matrix_eval(&fx.vk, &u, &lam), CompressLayer::MatrixEval, "moved r_x*");
+    expect_layer(
+      check_matrix_eval(&fx.vk, &u, &lam),
+      CompressLayer::MatrixEval,
+      "moved r_x*",
+    );
     let mut u = fx.u_star.clone();
     u.v[1] += F1::ONE;
-    expect_layer(check_matrix_eval(&fx.vk, &u, &lam), CompressLayer::MatrixEval, "value v*_1");
+    expect_layer(
+      check_matrix_eval(&fx.vk, &u, &lam),
+      CompressLayer::MatrixEval,
+      "value v*_1",
+    );
     let t = fx.vk.hfs().t();
     let mut u = fx.u_star.clone();
     u.v[t] += F1::ONE;
@@ -848,11 +877,15 @@ fn test_compress_rejects_openings() {
       );
     }
     expect_layer(
-      check_cyclefold(&fx.vk, &{
-        let mut c = p.head.cf.clone();
-        c.u += <E2 as Engine>::Scalar::ONE;
-        c
-      }, &p.cf_snark),
+      check_cyclefold(
+        &fx.vk,
+        &{
+          let mut c = p.head.cf.clone();
+          c.u += <E2 as Engine>::Scalar::ONE;
+          c
+        },
+        &p.cf_snark,
+      ),
       CompressLayer::CycleFold,
       "Spartan against another CycleFold instance",
     );
@@ -893,7 +926,10 @@ fn test_masked_opening_closes_tail_shift() {
     y
   };
   let ip = a.iter().zip(&eq).fold(F1::ZERO, |s, (x, e)| s + *x * e);
-  assert_eq!(ip, y_unmasked, "the unmasked relation accepts the tail shift");
+  assert_eq!(
+    ip, y_unmasked,
+    "the unmasked relation accepts the tail shift"
+  );
   let mut tr = super::compress_transcript(fx.vk.pp_digest(), super::head_digest(&head));
   let arg = InnerProductArgument::prove(
     &ck,
@@ -946,9 +982,16 @@ fn test_compress_rejects_byte_tampering() {
         }
       }
     }
-    println!("[P7 byte flips] {} positions × 2 bits: {layers:?}", positions.len());
+    println!(
+      "[P7 byte flips] {} positions × 2 bits: {layers:?}",
+      positions.len()
+    );
     for cut in [0, 3, 10, 15, bytes.len() / 2, bytes.len() - 1] {
-      expect_layer(verify(fx, &bytes[..cut]), CompressLayer::Format, "truncated");
+      expect_layer(
+        verify(fx, &bytes[..cut]),
+        CompressLayer::Format,
+        "truncated",
+      );
     }
     let mut ext = bytes.clone();
     ext.push(0);
@@ -957,20 +1000,36 @@ fn test_compress_rejects_byte_tampering() {
     let (_, p3, l3) = per_section[2];
     let mut f = bytes.clone();
     f[p3 - 4..p3].copy_from_slice(&((l3 - 1) as u32).to_le_bytes());
-    expect_layer(verify(fx, &f), CompressLayer::Format, "forged length (shorter)");
+    expect_layer(
+      verify(fx, &f),
+      CompressLayer::Format,
+      "forged length (shorter)",
+    );
     let (_, p9, l9) = per_section[8];
     let mut f = bytes.clone();
     f[p9 - 4..p9].copy_from_slice(&((l9 + 1) as u32).to_le_bytes());
     f.push(0);
-    expect_layer(verify(fx, &f), CompressLayer::Format, "forged length (longer)");
+    expect_layer(
+      verify(fx, &f),
+      CompressLayer::Format,
+      "forged length (longer)",
+    );
     let mut f = bytes.clone();
     f[p9 - 4..p9].copy_from_slice(&u32::MAX.to_le_bytes());
-    expect_layer(verify(fx, &f), CompressLayer::Format, "forged length (huge)");
+    expect_layer(
+      verify(fx, &f),
+      CompressLayer::Format,
+      "forged length (huge)",
+    );
     // non-canonical field element (p + x) in the statement
     let (_, p2, _) = per_section[1];
     let mut f = bytes.clone();
     f[p2 + 8..p2 + 40].copy_from_slice(&[0xff; 32]);
-    expect_layer(verify(fx, &f), CompressLayer::Format, "non-canonical scalar");
+    expect_layer(
+      verify(fx, &f),
+      CompressLayer::Format,
+      "non-canonical scalar",
+    );
   }
   run(chain_direct());
   run(tree_direct());

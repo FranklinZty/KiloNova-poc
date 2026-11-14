@@ -1651,6 +1651,507 @@ mod tree {
   }
 }
 
+/// P7a: compression and independent final verification through files, one step per process.
+///
+/// - `compress-setup kind=chain|tree variant=direct|span [K=2] [a=2] dir=D`: deterministic
+///   setup; writes `D/public/material.knvm` (the declared public material) and
+///   `D/public/setup.json` (pp digest, family digest, material SHA-256, key record).
+/// - `compress-prove ... [T=16] [L=8] seed=S dir=D`: re-runs the deterministic setup, checks the
+///   pp digest against `setup.json`, proves the chain / tree, writes the prover's private
+///   checkpoint `D/private/checkpoint.bin` and the proof `D/public/proof.kncp`.
+/// - `compress-verify ... mode=cold|warm dir=D`: reads **only** `D/public/{setup.json,
+///   material.knvm, proof.kncp}` and derives the expected public input from the declared task
+///   (chain: K, T, seed; tree: L, seed); cold times everything from the files on, warm preloads
+///   the material and the proof and times `verify-final` alone (median of `reps`).
+mod compress {
+  use super::*;
+  use nova_snark::kilonova::{
+    compress::{
+      compress_chain, compress_tree,
+      format::{account, decode, encode, write_material_chain, write_material_tree, Dims},
+      verify_final_chain, verify_final_tree_statement, CompressorKey, FinalVariant,
+      FinalVerifierKey, ProofKind, COMPRESS_VERSION, DECIDER,
+    },
+    hfs::{Direct, Span},
+    ivc::{fixtures::ChainPredicates, PrimaryTemplate, PublicParams, RecursiveSNARK},
+    pcd::{expected_root_statement, prove_tree, TreeParams, TreeTask},
+  };
+  use std::{
+    fs,
+    io::{BufReader, BufWriter},
+    path::{Path, PathBuf},
+  };
+
+  struct Cfg {
+    kind: ProofKind,
+    k: usize,
+    a: usize,
+    t: usize,
+    l: usize,
+    seed: u64,
+    dir: PathBuf,
+    mode: String,
+    reps: usize,
+  }
+
+  fn cfg(args: &Args) -> Result<Cfg, String> {
+    let kind = match arg(args, "kind", Some("chain".to_string()))?.as_str() {
+      "chain" => ProofKind::Chain,
+      "tree" => ProofKind::Tree,
+      k => return Err(format!("unknown kind {k} (chain | tree)")),
+    };
+    let c = Cfg {
+      kind,
+      k: arg(args, "K", Some(2))?,
+      a: arg(args, "a", Some(2))?,
+      t: arg(args, "T", Some(16))?,
+      l: arg(args, "L", Some(8))?,
+      seed: arg(args, "seed", Some(101))?,
+      dir: PathBuf::from(arg::<String>(args, "dir", None)?),
+      mode: arg(args, "mode", Some("cold".to_string()))?,
+      reps: arg(args, "reps", Some(3))?,
+    };
+    if !(1..=16).contains(&c.k) || c.t == 0 || c.l == 0 || c.a < 2 || c.reps == 0 {
+      return Err("need 1 <= K <= 16, T >= 1, L >= 1, a >= 2, reps >= 1".into());
+    }
+    Ok(c)
+  }
+
+  pub fn run(name: &str, out: &mut Output, args: &Args) -> Result<(), String> {
+    let c = cfg(args)?;
+    match arg(args, "variant", Some("direct".to_string()))?.as_str() {
+      "direct" => step::<Direct>(name, out, &c),
+      "span" => step::<Span>(name, out, &c),
+      v => Err(format!("unknown variant {v}")),
+    }
+  }
+
+  fn public(c: &Cfg) -> PathBuf {
+    c.dir.join("public")
+  }
+
+  fn common<V: FinalVariant>(out: &mut Output, c: &Cfg, step: &str) {
+    let kind = match c.kind {
+      ProofKind::Chain => "chain",
+      ProofKind::Tree => "tree",
+    };
+    out.f("scheme", format!("kilonova-p7a-{kind}-{}", V::NAME));
+    out.f("protocol_version", 2);
+    out.f("transcript_version", 2);
+    out.f(
+      "security_profile",
+      format!(
+        "pallas/vesta; {DECIDER}; final HFS v2 fold of the last CCCS; IPA (Pedersen, E1) for the masked z claim; Spartan RelaxedR1CSSNARK + IPA (E2) for the CycleFold accumulator; compression transcript kn-compress-v{COMPRESS_VERSION} (keccak); poseidon RO; challenge {NUM_CHALLENGE_BITS} bits; hash {NUM_HASH_BITS} bits; non-ZK"
+      ),
+    );
+    out.d("p7_step", step);
+    out.d("decider", DECIDER);
+    out.d("p7b", "not implemented (no sparse holographic evaluation)");
+    match c.kind {
+      ProofKind::Chain => {
+        out.f("workload", format!("p7-chain-predicates-k{}-T{}", c.k, c.t));
+        out.f("K", c.k);
+        out.f("T", c.t);
+        out.f("mu", 1);
+        out.f("nu", 1);
+        out.why("L", "chain run");
+        out.why("a", "chain run");
+      }
+      ProofKind::Tree => {
+        out.f("workload", format!("p7-w4-tree-chain-k2-L{}", c.l));
+        out.f("K", 4);
+        out.f("L", c.l);
+        out.f("a", c.a);
+        out.f("mu", c.a);
+        out.f("nu", c.a);
+        out.why("T", "tree run");
+      }
+    }
+    out.f(
+      "input_digest",
+      digest_of(
+        "p7-compress",
+        &[
+          ("kind", kind.into()),
+          ("variant", V::NAME.into()),
+          ("K", c.k.to_string()),
+          ("a", c.a.to_string()),
+          ("T", c.t.to_string()),
+          ("L", c.l.to_string()),
+          ("seed", c.seed.to_string()),
+        ],
+      ),
+    );
+  }
+
+  /// The chain's public input: app state from the seed, schedule (every member once, then
+  /// seeded), z_0 = (app, program register).
+  fn chain_input(c: &Cfg) -> Result<(ChainProg, Vec<F1>, Vec<F1>, Vec<usize>), String> {
+    let prog = ChainPredicates::<F1>::new(c.k, false).program();
+    let mut rng = ChaCha20Rng::seed_from_u64(c.seed);
+    let app0 = vec![F1::from(rng.next_u64()), F1::from(rng.next_u64())];
+    let ids: Vec<usize> = (0..c.t)
+      .map(|i| {
+        if i < c.k {
+          i
+        } else {
+          (rng.next_u32() as usize) % c.k
+        }
+      })
+      .collect();
+    let z0 = prog
+      .z0(&app0, &ids)
+      .ok_or("the schedule does not fit the program register")?;
+    Ok((prog, app0, z0, ids))
+  }
+
+  type ChainProg = nova_snark::kilonova::ivc::Scheduled<ChainPredicates<F1>>;
+
+  fn leaf() -> (ChainPredicates<F1>, Vec<String>) {
+    let leaf = ChainPredicates::<F1>::new(2, false);
+    let ids = (0..2).map(|k| leaf.member_id(k)).collect();
+    (leaf, ids)
+  }
+
+  fn read_pinned(c: &Cfg) -> Result<(F1, Value), String> {
+    let s =
+      fs::read_to_string(public(c).join("setup.json")).map_err(|e| format!("setup.json: {e}"))?;
+    let v: Value = serde_json::from_str(&s).map_err(|e| e.to_string())?;
+    let hex_s = v["pp_digest"].as_str().ok_or("setup.json: pp_digest")?;
+    let bytes: Vec<u8> = (0..hex_s.len() / 2)
+      .map(|i| u8::from_str_radix(&hex_s[2 * i..2 * i + 2], 16))
+      .collect::<Result<_, _>>()
+      .map_err(|e| e.to_string())?;
+    let mut repr = <F1 as PrimeField>::Repr::default();
+    if bytes.len() != repr.as_ref().len() {
+      return Err("setup.json: pp_digest length".into());
+    }
+    repr.as_mut().copy_from_slice(&bytes);
+    let d = Option::from(F1::from_repr(repr)).ok_or("setup.json: pp_digest not canonical")?;
+    Ok((d, v))
+  }
+
+  fn file_len(p: &Path) -> u64 {
+    fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+  }
+
+  fn step<V: FinalVariant>(name: &str, out: &mut Output, c: &Cfg) -> Result<(), String> {
+    common::<V>(out, c, name);
+    match name {
+      "compress-setup" => setup::<V>(out, c),
+      "compress-prove" => prove::<V>(out, c),
+      "compress-verify" => verify::<V>(out, c),
+      _ => unreachable!(),
+    }
+  }
+
+  fn setup<V: FinalVariant>(out: &mut Output, c: &Cfg) -> Result<(), String> {
+    fs::create_dir_all(public(c)).map_err(|e| e.to_string())?;
+    let mpath = public(c).join("material.knvm");
+    let t = Instant::now();
+    let (pp_digest, family_digest, iters) = match c.kind {
+      ProofKind::Chain => {
+        let (prog, ..) = chain_input(c)?;
+        let (pp, rep) = PublicParams::<E1, E2, V>::setup(&prog, PrimaryTemplate::R1cs)
+          .map_err(|e| format!("setup: {e}"))?;
+        out.f("setup_ms", ms(t));
+        let mut w = BufWriter::new(fs::File::create(&mpath).map_err(|e| e.to_string())?);
+        write_material_chain(&pp, &mut w).map_err(|e| e.to_string())?;
+        sizes(out, pp.hfs());
+        (pp.digest(), pp.family().digest(), rep.iterations.len())
+      }
+      ProofKind::Tree => {
+        let (leaf, ids) = leaf();
+        let (pp, rep) = TreeParams::<E1, E2, V>::setup(&leaf, &ids, c.a, PrimaryTemplate::R1cs)
+          .map_err(|e| format!("setup: {e}"))?;
+        out.f("setup_ms", ms(t));
+        let mut w = BufWriter::new(fs::File::create(&mpath).map_err(|e| e.to_string())?);
+        write_material_tree(&pp, &mut w).map_err(|e| e.to_string())?;
+        sizes(out, pp.hfs());
+        (pp.digest(), pp.family().digest(), rep.iterations.len())
+      }
+    };
+    out.f("setup_iterations", iters);
+    let material_bytes = file_len(&mpath);
+    out.f("vk_bytes", material_bytes);
+    // the key record: derive the verifier's keys once from the material just written
+    let t = Instant::now();
+    let vk = FinalVerifierKey::<V>::read_material(
+      &mut BufReader::new(fs::File::open(&mpath).map_err(|e| e.to_string())?),
+      Some(pp_digest),
+    )
+    .map_err(|e| format!("material: {e} (layer {:?})", e.layer()))?;
+    out.d("verifier_key_from_material_ms", ms(t));
+    let mat = fs::read(&mpath).map_err(|e| e.to_string())?;
+    let record = json!({
+      "pp_digest": fe_hex(&pp_digest),
+      "family_digest": fe_hex(&family_digest),
+      "material": "material.knvm",
+      "material_bytes": material_bytes,
+      "material_sha256": sha256_hex(&mat),
+      "compress_version": COMPRESS_VERSION,
+      "decider": DECIDER,
+      "keys": vk.key_record().iter().map(|(l, n, h)| json!({"key": l, "generators": n, "digest": h})).collect::<Vec<_>>(),
+      "srs": "transparent: Pedersen generators derived from labels by SHAKE256 hash-to-curve; no trusted setup",
+    });
+    fs::write(
+      public(c).join("setup.json"),
+      serde_json::to_string_pretty(&record).unwrap(),
+    )
+    .map_err(|e| e.to_string())?;
+    out.d("setup_record", record);
+    out.f("result_digest", fe_hex(&pp_digest));
+    for k in [
+      "recursive_ms",
+      "compression_ms",
+      "verify_warm_ms",
+      "verify_cold_ms",
+      "proof_bytes",
+      "verification_ok",
+    ] {
+      out.why(k, "compress-setup only writes the public material");
+    }
+    Ok(())
+  }
+
+  fn sizes(out: &mut Output, hfs: &nova_snark::kilonova::hfs::HfsParams<E1>) {
+    out.f("d", hfs.template().degree());
+    out.f("t", hfs.t());
+    out.f("q", hfs.template().q());
+    out.f("m_aug", hfs.m());
+    out.f("n_aug", hfs.n());
+    out.f(
+      "N_total",
+      hfs.shapes().iter().map(|s| s.nnz()).sum::<usize>(),
+    );
+    out.d(
+      "nnz_per_member",
+      json!(hfs.shapes().iter().map(|s| s.nnz()).collect::<Vec<_>>()),
+    );
+    out.d("s_s_prime", json!([hfs.s(), hfs.s_prime()]));
+  }
+
+  fn prove<V: FinalVariant>(out: &mut Output, c: &Cfg) -> Result<(), String> {
+    let (pinned, _) = read_pinned(c)?;
+    let private = c.dir.join("private");
+    fs::create_dir_all(&private).map_err(|e| e.to_string())?;
+    let t = Instant::now();
+    let (proof, ckpt) = match c.kind {
+      ProofKind::Chain => {
+        let (prog, app0, z0, ids) = chain_input(c)?;
+        let (pp, _) = PublicParams::<E1, E2, V>::setup(&prog, PrimaryTemplate::R1cs)
+          .map_err(|e| format!("setup: {e}"))?;
+        out.f("setup_ms", ms(t));
+        if pp.digest() != pinned {
+          return Err("the prover's parameters differ from the pinned setup".into());
+        }
+        sizes(out, pp.hfs());
+        let t = Instant::now();
+        let mut snark =
+          RecursiveSNARK::<E1, E2, V>::new(&pp, &prog, &z0).map_err(|e| e.to_string())?;
+        for _ in 1..c.t {
+          snark.prove_step(&pp, &prog).map_err(|e| e.to_string())?;
+        }
+        out.f("recursive_ms", ms(t));
+        let ok = snark.verify(&pp, c.t, &z0).is_ok();
+        out.d("uncompressed_verify_ok", ok);
+        out.d(
+          "expected_zn_matches",
+          snark.outputs()[..2] == prog.inner().run(&app0, &ids)[..],
+        );
+        let ckpt = bincode::serde::encode_to_vec(&snark, bincode::config::legacy())
+          .map_err(|e| e.to_string())?;
+        let t = Instant::now();
+        let key = CompressorKey::chain(&pp).map_err(|e| e.to_string())?;
+        out.d("compressor_key_ms", ms(t));
+        let t = Instant::now();
+        let p = compress_chain(&pp, &key, &snark).map_err(|e| e.to_string())?;
+        out.f("compression_ms", ms(t));
+        (p, ckpt)
+      }
+      ProofKind::Tree => {
+        let (leaf, ids) = leaf();
+        let (pp, _) = TreeParams::<E1, E2, V>::setup(&leaf, &ids, c.a, PrimaryTemplate::R1cs)
+          .map_err(|e| format!("setup: {e}"))?;
+        out.f("setup_ms", ms(t));
+        if pp.digest() != pinned {
+          return Err("the prover's parameters differ from the pinned setup".into());
+        }
+        sizes(out, pp.hfs());
+        let task = TreeTask::<F1>::generate(c.seed, c.l, 2);
+        let t = Instant::now();
+        let (root, run) = prove_tree(&pp, &leaf, &task).map_err(|e| e.to_string())?;
+        out.f("recursive_ms", ms(t));
+        out.d("tree_nodes", run.nodes.len());
+        out.d("uncompressed_verify_ok", root.verify_root(&pp).is_ok());
+        let ckpt = bincode::serde::encode_to_vec(&root, bincode::config::legacy())
+          .map_err(|e| e.to_string())?;
+        let t = Instant::now();
+        let key = CompressorKey::tree(&pp).map_err(|e| e.to_string())?;
+        out.d("compressor_key_ms", ms(t));
+        let t = Instant::now();
+        let p = compress_tree(&pp, &key, &root).map_err(|e| e.to_string())?;
+        out.f("compression_ms", ms(t));
+        (p, ckpt)
+      }
+    };
+    fs::write(private.join("checkpoint.bin"), &ckpt).map_err(|e| e.to_string())?;
+    out.f("checkpoint_bytes", ckpt.len());
+    let bytes = encode(&proof);
+    fs::write(public(c).join("proof.kncp"), &bytes).map_err(|e| e.to_string())?;
+    out.f("proof_bytes", bytes.len());
+    out.f("result_digest", sha256_hex(&bytes));
+    out.why(
+      "verification_ok",
+      "verification runs in compress-verify (separate process)",
+    );
+    for k in ["verify_warm_ms", "verify_cold_ms"] {
+      out.why(k, "measured by compress-verify (separate process)");
+    }
+    Ok(())
+  }
+
+  fn verify<V: FinalVariant>(out: &mut Output, c: &Cfg) -> Result<(), String> {
+    let pubd = public(c);
+    let t_cold = Instant::now();
+    let (pinned, _) = read_pinned(c)?;
+    let t = Instant::now();
+    let vk = FinalVerifierKey::<V>::read_material(
+      &mut BufReader::new(fs::File::open(pubd.join("material.knvm")).map_err(|e| e.to_string())?),
+      Some(pinned),
+    )
+    .map_err(|e| format!("material: {e} (layer {:?})", e.layer()))?;
+    let load_ms = ms(t);
+    let bytes = fs::read(pubd.join("proof.kncp")).map_err(|e| e.to_string())?;
+    // the expected public input, from the declared task only
+    let check = |vk: &FinalVerifierKey<V>, bytes: &[u8]| -> Result<String, String> {
+      match c.kind {
+        ProofKind::Chain => {
+          let (prog, app0, z0, ids) = chain_input(c)?;
+          let o = verify_final_chain(vk, bytes, c.t, &z0)
+            .map_err(|e| format!("verify-final: {e} (layer {:?})", e.layer()))?;
+          if o.zn[..2] != prog.inner().run(&app0, &ids)[..] {
+            return Err("verified, but z_n is not the task's".into());
+          }
+          let mut r = Vec::new();
+          o.zn
+            .iter()
+            .for_each(|z| r.extend_from_slice(z.to_repr().as_ref()));
+          Ok(sha256_hex(&r))
+        }
+        ProofKind::Tree => {
+          let (leaf, _) = leaf();
+          let task = TreeTask::<F1>::generate(c.seed, c.l, 2);
+          let expected = expected_root_statement::<E1>(c.a, &task, |k, x| leaf.output(k, x));
+          let s = verify_final_tree_statement(vk, bytes, &expected)
+            .map_err(|e| format!("verify-final: {e} (layer {:?})", e.layer()))?;
+          let mut r = Vec::new();
+          s.result
+            .iter()
+            .for_each(|z| r.extend_from_slice(z.to_repr().as_ref()));
+          Ok(sha256_hex(&r))
+        }
+      }
+    };
+    let t = Instant::now();
+    let first = check(&vk, &bytes);
+    let first_ms = ms(t);
+    let cold_ms = ms(t_cold);
+    out.d("material_load_ms", load_ms);
+    out.d("material_bytes", file_len(&pubd.join("material.knvm")));
+    out.d("pp_digest", fe_hex(&vk.pp_digest()));
+    let digest = first.clone()?;
+    out.f("result_digest", digest);
+    let p = decode(&vk, &bytes).map_err(|e| e.to_string())?;
+    let acc = account(&vk, &p).map_err(|e| e.to_string())?;
+    if acc.total != bytes.len() {
+      return Err(format!("account {} != file {}", acc.total, bytes.len()));
+    }
+    let d = Dims {
+      arity: vk.arity(),
+      num_io: vk.hfs().num_io(),
+      s: vk.hfs().s(),
+      s_prime: vk.hfs().s_prime(),
+      t: vk.hfs().t(),
+      k: vk.hfs().k(),
+      deg_x: vk.hfs().template().deg_x(),
+      n_cf: vk.cyclefold_shape().num_io,
+      n_cf_rows: vk.cyclefold_shape().num_cons,
+    };
+    out.f("proof_bytes", bytes.len());
+    out.f(
+      "statement_bytes",
+      acc
+        .by_section
+        .iter()
+        .find(|s| s.0 == "statement")
+        .map(|s| s.1)
+        .unwrap_or(0),
+    );
+    out.f("vk_bytes", file_len(&pubd.join("material.knvm")));
+    out.d("proof_items", serde_json::to_value(&acc.items).unwrap());
+    out.d("proof_by_section", json!(acc.by_section));
+    out.d(
+      "dims",
+      json!({"s": d.s, "s_prime": d.s_prime, "t": d.t, "K": d.k, "deg_x": d.deg_x, "n_cf": d.n_cf,
+             "cf_rows": d.n_cf_rows, "num_w": vk.hfs().num_w(), "m": vk.hfs().m(),
+             "N_total": vk.hfs().shapes().iter().map(|s| s.nnz()).sum::<usize>()}),
+    );
+    sizes(out, vk.hfs());
+    out.d(
+      "files_read",
+      json!([
+        "public/setup.json",
+        "public/material.knvm",
+        "public/proof.kncp"
+      ]),
+    );
+    match c.mode.as_str() {
+      "cold" => {
+        out.f("verify_cold_ms", cold_ms);
+        out.d(
+          "cold_breakdown_ms",
+          json!({"material_and_keys": load_ms, "verify_final": first_ms}),
+        );
+        out.why(
+          "verify_warm_ms",
+          "cold run (separate record with mode=warm)",
+        );
+      }
+      "warm" => {
+        let mut v = Vec::new();
+        for _ in 0..c.reps {
+          let t = Instant::now();
+          check(&vk, &bytes)?;
+          v.push(ms(t));
+        }
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        out.f("verify_warm_ms", v[v.len() / 2]);
+        out.d("warm_reps_ms", json!(v));
+        out.d("first_verify_ms", first_ms);
+        out.why(
+          "verify_cold_ms",
+          "warm run (separate record with mode=cold)",
+        );
+      }
+      m => return Err(format!("unknown mode {m} (cold | warm)")),
+    }
+    out.f("verification_ok", true);
+    for k in [
+      "setup_ms",
+      "recursive_ms",
+      "compression_ms",
+      "checkpoint_bytes",
+    ] {
+      out.why(
+        k,
+        "compress-verify reads only the public material and the proof",
+      );
+    }
+    Ok(())
+  }
+}
+
 fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
   let variant = || -> Result<String, String> { arg(args, "variant", Some("direct".to_string())) };
   let seed = || -> Result<u64, String> { arg(args, "seed", Some(101)) };
@@ -1684,6 +2185,7 @@ fn run(name: &str, args: &Args, out: &mut Output) -> Result<(), String> {
     "ivc" => scenario_ivc(out, args),
     "family" => family::run(out, args),
     "tree" => tree::run(out, args),
+    "compress-setup" | "compress-prove" | "compress-verify" => compress::run(name, out, args),
     other => Err(format!("unknown scenario '{other}'")),
   }
 }
@@ -1692,7 +2194,7 @@ fn main() {
   let argv: Vec<String> = std::env::args().skip(1).collect();
   let Some(name) = argv.first().cloned() else {
     eprintln!(
-      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs|ivc|family|tree> [key=value ...]"
+      "usage: kn-scenario <noop|sleep|alloc|fail|constraints|bootstrap|chain|ccs|hfs|ivc|family|tree|compress-setup|compress-prove|compress-verify> [key=value ...]"
     );
     std::process::exit(2);
   };

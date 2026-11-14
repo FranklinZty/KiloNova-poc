@@ -29,7 +29,9 @@ use crate::{
   errors::NovaError,
   kilonova::{
     family::{FamilyMeta, PredicateFamily},
-    hfs::{num_vars, HfsError, HfsParams, HfsProof, IncomingInstance, Layer, RunningInstance, NIFS},
+    hfs::{
+      num_vars, HfsError, HfsParams, HfsProof, IncomingInstance, Layer, RunningInstance, NIFS,
+    },
     ivc::{
       chain_link_hash, chain_pp_digest, ChainOutput, IvcVariant, PrimaryTemplate, PublicParams,
       RecursiveSNARK, CF_CK_LABEL,
@@ -46,8 +48,7 @@ use crate::{
   r1cs::{R1CSShape, RelaxedR1CSInstance, RelaxedR1CSWitness},
   spartan::snark::{ProverKey as SpartanPk, RelaxedR1CSSNARK, VerifierKey as SpartanVk},
   traits::{
-    commitment::CommitmentEngineTrait, snark::RelaxedR1CSSNARKTrait, Engine,
-    TranscriptEngineTrait,
+    commitment::CommitmentEngineTrait, snark::RelaxedR1CSSNARKTrait, Engine, TranscriptEngineTrait,
   },
   CommitmentKey,
 };
@@ -434,7 +435,11 @@ pub struct CompressorKey {
 }
 
 impl CompressorKey {
-  fn build(hfs: &HfsParams<E1>, cf_shape: &R1CSShape<E2>, ck_cf: &CommitmentKey<E2>) -> Result<Self, CompressError> {
+  fn build(
+    hfs: &HfsParams<E1>,
+    cf_shape: &R1CSShape<E2>,
+    ck_cf: &CommitmentKey<E2>,
+  ) -> Result<Self, CompressError> {
     let n = 1usize << hfs.s_prime();
     let (cf_pk, _) = CfSnark::setup(ck_cf, cf_shape)?;
     Ok(Self {
@@ -464,7 +469,10 @@ fn compress_common<V: FinalVariant>(
   kind: ProofKind,
   pp_digest: F1,
   statement: FinalStatement,
-  (r_u, r_w): (&RunningInstance<E1, V>, &crate::kilonova::hfs::RunningWitness<E1>),
+  (r_u, r_w): (
+    &RunningInstance<E1, V>,
+    &crate::kilonova::hfs::RunningWitness<E1>,
+  ),
   (l_u, l_w): (&IncomingInstance<E1>, &[F1]),
   (cf_u, cf_w): (&RelaxedR1CSInstance<E2>, &RelaxedR1CSWitness<E2>),
 ) -> Result<CompressedProof<V>, CompressError> {
@@ -624,7 +632,10 @@ impl<V: FinalVariant> FinalVerifierKey<V> {
   /// setup) when given. Layer Material on any failure.
   pub fn from_parts(
     header: MaterialHeader,
-    members: Vec<(crate::kilonova::hfs::CcsTemplate<F1>, crate::kilonova::hfs::CcsShape<F1>)>,
+    members: Vec<(
+      crate::kilonova::hfs::CcsTemplate<F1>,
+      crate::kilonova::hfs::CcsShape<F1>,
+    )>,
     expected: Option<F1>,
   ) -> Result<Self, CompressError> {
     let bad = |m: String| CompressError::Material(m);
@@ -672,7 +683,10 @@ impl<V: FinalVariant> FinalVerifierKey<V> {
       }
       ProofKind::Tree => {
         if header.a < 2 || header.k_leaf as usize + 2 != k {
-          return Err(bad(format!("tree a = {}, K_leaf = {}, K = {k}", header.a, header.k_leaf)));
+          return Err(bad(format!(
+            "tree a = {}, K_leaf = {}, K = {k}",
+            header.a, header.k_leaf
+          )));
         }
         tree_pp_digest::<E1, E2>(
           V::NAME,
@@ -717,7 +731,10 @@ impl<V: FinalVariant> FinalVerifierKey<V> {
   }
 
   /// Reads a material file (see [`format::write_material_chain`]) and builds the key.
-  pub fn read_material(r: &mut impl std::io::Read, expected: Option<F1>) -> Result<Self, CompressError> {
+  pub fn read_material(
+    r: &mut impl std::io::Read,
+    expected: Option<F1>,
+  ) -> Result<Self, CompressError> {
     let (header, members) = format::read_material(r)?;
     Self::from_parts(header, members, expected)
   }
@@ -848,7 +865,9 @@ pub(crate) fn check_cyclefold<V: FinalVariant>(
   match res {
     Ok(Ok(())) => Ok(()),
     Ok(Err(e)) => Err(CompressError::CycleFold(format!("{e}"))),
-    Err(_) => Err(CompressError::CycleFold("malformed proof (verifier panicked)".into())),
+    Err(_) => Err(CompressError::CycleFold(
+      "malformed proof (verifier panicked)".into(),
+    )),
   }
 }
 
@@ -907,7 +926,13 @@ pub fn verify_final_chain_proof<V: FinalVariant>(
 ) -> Result<ChainOutput<F1>, CompressError> {
   check_binding(vk, &p.head, ProofKind::Chain)?;
   let h = &p.head;
-  let FinalStatement::Chain { n, z0: pz0, zn, trace } = &h.statement else {
+  let FinalStatement::Chain {
+    n,
+    z0: pz0,
+    zn,
+    trace,
+  } = &h.statement
+  else {
     return Err(CompressError::Format("not a chain statement".into()));
   };
   if num_steps == 0 || *n != num_steps as u64 || pz0.as_slice() != z0 {
@@ -966,7 +991,10 @@ pub fn verify_final_tree_proof<V: FinalVariant>(
   };
   let l = ctx.num_leaves;
   if *a != vk.a as u64 {
-    return Err(CompressError::Statement(format!("a = {a}, parameters for a = {}", vk.a)));
+    return Err(CompressError::Statement(format!(
+      "a = {a}, parameters for a = {}",
+      vk.a
+    )));
   }
   if l == 0 || l >= 1u64 << RANGE_BITS {
     return Err(CompressError::Statement(format!("L = {l} out of range")));
@@ -981,7 +1009,8 @@ pub fn verify_final_tree_proof<V: FinalVariant>(
   if stmt.result.len() != vk.arity || h.incoming.k >= vk.hfs.k() || h.incoming.io.len() != 1 {
     return Err(CompressError::Format("root statement or instance".into()));
   }
-  let link = tree_link_hash::<E1, E2, V>(vk.pp_digest, vk.hfs.digest(), ctx, stmt, &h.running, &h.cf);
+  let link =
+    tree_link_hash::<E1, E2, V>(vk.pp_digest, vk.hfs.digest(), ctx, stmt, &h.running, &h.cf);
   if h.incoming.io[0] != link {
     return Err(CompressError::LinkHash);
   }

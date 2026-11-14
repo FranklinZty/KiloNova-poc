@@ -122,9 +122,8 @@ impl<'a> ByteReader<'a> {
     let mut repr = F::Repr::default();
     let n = repr.as_ref().len();
     repr.as_mut().copy_from_slice(self.take(n)?);
-    Option::from(F::from_repr(repr)).ok_or_else(|| {
-      HfsError::InvalidFamily("member encoding: non-canonical field element".into())
-    })
+    Option::from(F::from_repr(repr))
+      .ok_or_else(|| HfsError::InvalidFamily("member encoding: non-canonical field element".into()))
   }
 
   fn remaining_words(&self) -> usize {

@@ -649,16 +649,7 @@ where
     run: &RunningInstance<E1, V>,
     cf: &RelaxedR1CSInstance<E2>,
   ) -> E1::Scalar {
-    chain_link_hash::<E1, E2, V>(
-      self.pp_digest,
-      self.hfs.digest(),
-      i,
-      z0,
-      zi,
-      trace,
-      run,
-      cf,
-    )
+    chain_link_hash::<E1, E2, V>(self.pp_digest, self.hfs.digest(), i, z0, zi, trace, run, cf)
   }
 
   fn default_running(&self) -> (RunningInstance<E1, V>, RunningWitness<E1>) {

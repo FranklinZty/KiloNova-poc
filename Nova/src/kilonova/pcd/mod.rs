@@ -298,6 +298,63 @@ where
   ro.squeeze(NUM_HASH_BITS)
 }
 
+/// `H(TAG_LEAF, p, k, x)` (free twin of [`TreeParams::leaf_hash`]).
+fn leaf_hash<E1: Engine>(p: u64, k: usize, x: &[E1::Scalar]) -> E1::Scalar {
+  let mut xs = vec![E1::Scalar::from(p), E1::Scalar::from(k as u64)];
+  xs.extend_from_slice(x);
+  hash_native::<E1>(TAG_TREE_LEAF, &xs)
+}
+
+fn dummy_hash<E1: Engine>(lo: u64, hi: u64) -> E1::Scalar {
+  hash_native::<E1>(
+    TAG_TREE_DUMMY,
+    &[E1::Scalar::from(lo), E1::Scalar::from(hi)],
+  )
+}
+
+fn node_hash<E1: Engine>(lo: u64, hi: u64, hs: &[E1::Scalar]) -> E1::Scalar {
+  let mut xs = vec![E1::Scalar::from(lo), E1::Scalar::from(hi)];
+  xs.extend_from_slice(hs);
+  hash_native::<E1>(TAG_TREE_NODE, &xs)
+}
+
+/// The root statement a correct tree for `task` with arity a must prove, from the task and the
+/// leaf predicates' native outputs alone (no parameters needed: the final verifier's expected
+/// statement, P7).
+pub fn expected_root_statement<E1: Engine>(
+  a: usize,
+  task: &TreeTask<E1::Scalar>,
+  eval: impl Fn(usize, &[E1::Scalar]) -> Vec<E1::Scalar>,
+) -> RootStatement<E1::Scalar> {
+  let layout = task.layout(a);
+  let mut hashes: HashMap<(usize, u64), E1::Scalar> = HashMap::new();
+  for (h, level) in layout.levels.iter().enumerate() {
+    for n in level {
+      let v = match n.role {
+        LayoutRole::Leaf { p, k } => leaf_hash::<E1>(p as u64, k, &task.leaves()[p].x),
+        LayoutRole::Dummy => dummy_hash::<E1>(n.lo, n.hi),
+        LayoutRole::Merge => {
+          let w = (n.hi - n.lo) / a as u64;
+          let hs: Vec<E1::Scalar> = (0..a as u64)
+            .map(|c| hashes[&(h - 1, n.lo + c * w)])
+            .collect();
+          node_hash::<E1>(n.lo, n.hi, &hs)
+        }
+      };
+      hashes.insert((h, n.lo), v);
+    }
+  }
+  RootStatement {
+    task_id: task.task_id(),
+    num_leaves: task.num_leaves() as u64,
+    arity: a,
+    lo: 0,
+    hi: layout.capacity,
+    result: task.expected_result(eval),
+    tree_hash: hashes[&(layout.depth, 0)],
+  }
+}
+
 /// Public parameters of the tree PCD for a leaf family and arity a.
 pub struct TreeParams<E1, E2, V>
 where
@@ -760,39 +817,13 @@ where
   }
 
   /// The statement a correct tree for `task` must prove at its root (computed from the task
-  /// alone: task id, L, the layout for a, R and the tree hash).
+  /// alone: task id, L, the layout for a, R and the tree hash). See [`expected_root_statement`].
   pub fn root_statement(
     &self,
     task: &TreeTask<E1::Scalar>,
     eval: impl Fn(usize, &[E1::Scalar]) -> Vec<E1::Scalar>,
   ) -> RootStatement<E1::Scalar> {
-    let layout = task.layout(self.a);
-    let mut hashes: HashMap<(usize, u64), E1::Scalar> = HashMap::new();
-    for (h, level) in layout.levels.iter().enumerate() {
-      for n in level {
-        let v = match n.role {
-          LayoutRole::Leaf { p, k } => self.leaf_hash(p as u64, k, &task.leaves()[p].x),
-          LayoutRole::Dummy => self.dummy_hash(n.lo, n.hi),
-          LayoutRole::Merge => {
-            let w = (n.hi - n.lo) / self.a as u64;
-            let hs: Vec<E1::Scalar> = (0..self.a as u64)
-              .map(|c| hashes[&(h - 1, n.lo + c * w)])
-              .collect();
-            self.node_hash(n.lo, n.hi, &hs)
-          }
-        };
-        hashes.insert((h, n.lo), v);
-      }
-    }
-    RootStatement {
-      task_id: task.task_id(),
-      num_leaves: task.num_leaves() as u64,
-      arity: self.a,
-      lo: 0,
-      hi: layout.capacity,
-      result: task.expected_result(eval),
-      tree_hash: hashes[&(layout.depth, 0)],
-    }
+    expected_root_statement::<E1>(self.a, task, eval)
   }
 
   fn default_running(&self) -> (RunningInstance<E1, V>, RunningWitness<E1>) {

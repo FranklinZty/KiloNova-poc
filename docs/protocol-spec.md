@@ -343,3 +343,84 @@ Defaults: U with identity commitments (λ = 0 for Span), u = 0, io = r_x = r_y =
 | tree leaf / dummy | 0 | 0 | 0 | none (defaults) |
 | tree merge | a | a | a | a running (a − 1 relaxed folds) + 1 fresh |
 | root verification | — | decider on 1 accumulator | — | 1 accumulator checked |
+
+## 12. Compression and independent final verification, P7a `reference-basis-decider` (`compress::COMPRESS_VERSION = 1`)
+
+Code: `Nova/src/kilonova/compress/` (`mod.rs`, `format.rs`, `tests.rs`). Plan `docs/P7-plan.md`, report `docs/P7-report.md`. HFS transcript v2 (§8), the chain layer (§9) and the tree layer (§11) are unchanged; compression adds its own transcript, tags and version. Instantiation: Pallas (E1) / Vesta (E2), Pedersen, IPA (`provider/ipa_pc.rs`), Spartan `RelaxedR1CSSNARK` (`spartan/snark.rs`, non-preprocessing). **P7b (sparse holographic evaluation, Spark-style) is not implemented**; this section is the intermediate reference decider only.
+
+### 12.1 What is compressed
+
+The uncompressed verifiers (§9.5, §11.4) read three witnesses: the running ACCS witness `(W_n, λ_n)`, the CycleFold witness `(W, E)` and the last incoming CCCS witness `w_n` (chain: the last step's circuit; tree: the root's own circuit). The compressed proof replaces each:
+
+| Uncompressed check | Compressed replacement |
+|---|---|
+| LastIncoming / RootIncoming (`w_n` opens `comm_W`, CCS of member `u_n.k` holds) | **final native fold**: one more HFS v2 fold of `(U_n; u_n)` with μ = ν = 1 (transcript §8.5 unchanged), proven by the compressor, verified by `NIFS::verify`; the verifier does the fold's group operations itself (no CycleFold instance). Result `U*`. |
+| Decider index opening (Direct `comm_M = Com(λ)`; Span public λ = witness λ) | Direct: the proof **reveals λ*** (K elements), the verifier recomputes `Com(ck_index_j, λ*)` for j < t (the "virtual commitment" computation); Span: λ* is public in `U*` |
+| Decider claims `v_j = Σ_k λ_k M̃_{k,j}(r_x, r_y)` | the verifier evaluates **every base matrix** `M̃_{k,j}(r_x*, r_y*)` from the declared family (eq tables of size 2^s and 2^{s′}, O(Σ_k nnz)); **weighted path**, see §12.6 |
+| Decider claim `v_t = z̃(r_y)`, `comm_W = Com(W)` | **masked IPA opening** of `comm_W*` (§12.2) |
+| CycleFold `is_sat_relaxed(cfU_n, cfW_n)` | Spartan `RelaxedR1CSSNARK<E2, IPA<E2>>` on `cfU_n` under the CycleFold key (`kn-ivc-cf-ck` / `kn-pcd-cf-ck`), shape already padded (B18 untouched) |
+| LinkHash, Statement | unchanged, recomputed natively from the public statement, `U_n`, `cfU_n` |
+
+Knowledge soundness of the HFS (not proven, §8.7) reduces "U_n and u_n satisfied" to "U* satisfied"; this is the same step every recursive fold relies on.
+
+### 12.2 The z claim and the masked opening
+
+`z* = (W* ‖ u* ‖ io*)` with `|W*| = num_w`, index bit i ↔ `r_y*[i]`. Then `v*_t = Σ_{i<num_w} W*_i·eq(i, r_y*) + u*·eq(num_w, r_y*) + Σ_j io*_j·eq(num_w+1+j, r_y*)`. The verifier computes the target `y = v*_t − u*·eq(num_w, r_y*) − Σ_j io*_j·eq(num_w+1+j, r_y*)` and the vector `b ∈ F^{2^{s′}}` with `b_i = eq(i, r_y*)` for `i < num_w` and **`b_i = 0` for `i ≥ num_w`**; the IPA proves knowledge of `a` with `Com(ck_ext, a) = comm_W*` and `⟨a, b⟩ = y`. `ck_ext` = `kn-hfs-v2-ck` derived at 2^{s′} generators; generators come from one SHAKE stream, so its first num_w generators are the HFS key and every HFS commitment is unchanged.
+
+Why the mask: a committed vector may have a tail beyond num_w (on generators the HFS key does not have). With the unmasked `b = eq(r_y*, ·)` such a tail would shift the u/io entries of z* (for example the last circuit's link-hash output), i.e. the last CCCS could be satisfied for another io than the one bound by the link hash. With the mask, the tail never enters an evaluation, so the relation proven is "`comm_W* = Com(W*) + Com(tail)` and the CCS/ACCS claims hold for `(W* ‖ u* ‖ io*)`", in which the tail is inert. `test_masked_opening_closes_tail_shift` shows the unmasked relation accepting a tail shift and the masked check rejecting it.
+
+### 12.3 Relations between the committed and public objects
+
+```text
+statement S  (chain (n, z_0, z_n, trace) | tree (task_id, L, a, lo, hi, R, h))
+  → H_link(pp, family, S, U_n, cfU_n) = u_n.io[0]              (§9.3 / §11.2, checked natively)
+  → io* = U_n.io + ρ·u_n.io,  u* = U_n.u + ρ                    (final fold, §12.1)
+  → z* = (W* ‖ u* ‖ io*)                                        (full assignment: NO commitment of its own;
+                                                                  only W* is committed, by comm_W* = comm_W_n + ρ·comm_W(u_n))
+  → v*_t = z̃*(r_y*)                                             (masked IPA against comm_W*, §12.2)
+  → v*_j = Σ_k λ*_k M̃_{k,j}(r_x*, r_y*), j < t                  (reference-basis evaluation at the
+                                                                  matrix evaluation point (r_x*, r_y*) = the
+                                                                  final fold's sum-check points; the values
+                                                                  v* = ε_n + ρ·θ are the final fold's claims)
+```
+
+The final application output (z_n or R) therefore reaches the opened claims only through the link hash in `io*`; it is never opened from a commitment.
+
+### 12.4 Compression transcript (new)
+
+`E1::TE` (Keccak) with label `kn-compress-v1`; absorbs `TAG_COMPRESS = 0x4b4e_4350_0001_0001`, the pp digest and the **head digest** (SHA3-256 of the canonical bytes of the file header and sections 1–7, top 6 bits cleared, as a scalar), then the IPA's messages (`dom_sep "IPA"`, `U = (comm, y)`, L/R rounds). The masked b is a function of `r_y*` and num_w, both fixed by the head digest and the pp digest. Spartan keeps its inherited transcript (`"RelaxedR1CSSNARK"`, vk digest, cfU); cfU is bound to S by the link hash.
+
+### 12.5 Proof format v1 and the terminal-check map
+
+`"KNCP" | version u16 = 1 | kind u8 (1 chain, 2 tree) | variant u8 (0 Direct, 1 Span) | 9 u16`, then 9 sections `tag u8 | len u32 LE | payload` in order. Scalars: 32-byte canonical LE repr; points: 32-byte compressed (invalid points rejected); integers LE. Sections 1–7 have no length prefixes (all lengths from the material); 8 (IPA) and 9 (Spartan) are bincode legacy. The verifier requires each section length to equal the value computed from the material (`format::Dims::section_bytes`), exact consumption, no trailing bytes, and `encode(decode(b)) = b`.
+
+| # | Section | Content | Bytes |
+|---|---|---|---|
+| 1 | binding | pp digest, family digest | 64 |
+| 2 | statement | chain `n u64, z_0, z_n, trace`; tree `task_id, L, a, lo, hi (u64), R, h` | chain 8 + 64·arity + 32; tree 96 + 32·arity |
+| 3 | running | `U_n`: comm_W, index, u, io, r_x, r_y, v | 32·(2 + num_io + s + s′ + t + 1) + (Direct 32·t / Span **32·K**) |
+| 4 | incoming | `u_n`: k u64, comm_W, io | 40 + 32·num_io |
+| 5 | cf_instance | `cfU_n`: comm_W, comm_E, u, X | 32·(3 + n_cf) |
+| 6 | fold_proof | sc_x, σ, τ, sc_y, ε, θ (μ = ν = 1) | 32·(s(deg_x+1) + 2t + 3s′ + 2(t+1)) |
+| 7 | index_opening | Direct λ*; Span empty | Direct **32·K**; Span 0 |
+| 8 | witness_opening | IPA L[s′], R[s′], â | 2·(8 + 32·s′) + 32 |
+| 9 | cf_snark | Spartan: outer/inner/batch sum-checks, claims, evals, IPA | 8 + ν(8+96) + 96 + 32 + 8 + (ν+1)(8+64) + 32 + 8 + ν(8+64) + 72 + 2(8+32ν) + 32, ν = log₂(CycleFold rows) |
+
+Total = 10 + 45 + Σ. K enters only through λ (one of sections 3/7, 32·K bytes), N and the matrix dimensions only through s = ⌈log₂ m⌉, s′ = ⌈log₂ n⌉, and the CycleFold size through ν (n_cf and ν depend weakly on K and a). The account (`format::account`) lists every item with its formula and is tested to sum to the file length.
+
+Terminal-check map (`CompressLayer`, in order): **Material** (material decode, digests, pinned pp digest) → **Format** (§12.5 parsing) → **Binding** (pp and family digest of the proof = the verifier's) → **Statement** (chain: n, z_0 = expected; tree: a, 1 ≤ L < 2^32, `[0, a^d)`, expected statement) → **LinkHash** → **FinalFold** (`NIFS::verify`) → **IndexOpening** (Direct) → **MatrixEval** → **WitnessOpening** (IPA) → **CycleFold** (Spartan).
+
+### 12.6 Index path of the decider
+
+The weighted (reference-basis) path: the verifier keeps the K base members and λ*, cost O(2^s + 2^{s′} + Σ_k nnz(M_k)) field operations and O(Σ_k nnz) material, linear in K. The explicit union path (§10.2) is not used by the final verifier: building `M_{λ*}` from λ* costs a Σ_k nnz merge per proof (λ* differs per proof), so it never beats the weighted path for one verification; it only helps a verifier that caches a folded matrix, which a per-proof λ* rules out.
+
+### 12.7 Public material and separate processes
+
+Material file `KNVM | version u16 | header len u64 | header (bincode: kind, variant, template, arity, a, K_leaf, label, ids, selector, padded CycleFold R1CS shape) | K u64 | K × (len u64 | canonical member encoding, §10.1)`. The verifier decodes each member strictly (`family::decode_member`), recomputes member digests, the family digest, the CycleFold shape digest and the pp digest, compares it with the digest pinned at setup, then derives every key from its label (transparent setup; no SRS). `kn-scenario compress-setup | compress-prove | compress-verify` run the three roles in separate processes through `dir/public/{material.knvm, setup.json, proof.kncp}` and `dir/private/checkpoint.bin` (the prover's checkpoint, never read by the verifier).
+
+### 12.8 Limitations
+
+- Reference basis only (P7b absent): the final verifier is O(K·N) in the index and reads the whole family (material size grows linearly in K).
+- IPA and Spartan-with-IPA verifiers are linear in their vector sizes (2^{s′}, CycleFold rows): succinct in proof size, not in verifier time (as inherited Nova).
+- Direct reveals λ* (K elements): the committed-index variant loses its index hiding at the end (not a ZK claim anyway).
+- No soundness proof for the composition (final fold + masked IPA + Spartan); the arguments here are design arguments, tests are not proofs.

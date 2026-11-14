@@ -20,8 +20,8 @@ use super::{
 use crate::{
   kilonova::{
     family::{decode_member, encode_member},
-    hfs::{CcsShape, CcsTemplate, HfsParams, HfsProof, IncomingInstance, RunningInstance},
     hfs::Variant,
+    hfs::{CcsShape, CcsTemplate, HfsParams, HfsProof, IncomingInstance, RunningInstance},
     ivc::PublicParams,
     pcd::{NodeStatement, TaskCtx, TreeParams},
   },
@@ -204,7 +204,8 @@ impl Dims {
   }
 
   fn running_bytes<V: FinalVariant>(&self) -> usize {
-    32 + V::index_bytes(self.t, self.k) + 32 * (1 + self.num_io + self.s + self.s_prime + self.t + 1)
+    32 + V::index_bytes(self.t, self.k)
+      + 32 * (1 + self.num_io + self.s + self.s_prime + self.t + 1)
   }
 
   fn fold_bytes(&self) -> usize {
@@ -246,7 +247,9 @@ impl Dims {
 
   /// Expected total proof length.
   pub fn proof_bytes<V: FinalVariant>(&self, kind: ProofKind) -> usize {
-    HEADER_BYTES + NUM_SECTIONS * FRAMING_BYTES + self.section_bytes::<V>(kind).iter().sum::<usize>()
+    HEADER_BYTES
+      + NUM_SECTIONS * FRAMING_BYTES
+      + self.section_bytes::<V>(kind).iter().sum::<usize>()
   }
 }
 
@@ -593,16 +596,46 @@ pub fn account<V: FinalVariant>(
     },
   );
   add("running", "u", 32, 1, "32".into());
-  add("running", "io", 32 * d.num_io, d.num_io, format!("32·num_io ({})", d.num_io));
+  add(
+    "running",
+    "io",
+    32 * d.num_io,
+    d.num_io,
+    format!("32·num_io ({})", d.num_io),
+  );
   add("running", "r_x", 32 * d.s, d.s, format!("32·s ({})", d.s));
-  add("running", "r_y", 32 * d.s_prime, d.s_prime, format!("32·s' ({})", d.s_prime));
-  add("running", "v", 32 * (d.t + 1), d.t + 1, format!("32·(t+1) ({})", d.t + 1));
+  add(
+    "running",
+    "r_y",
+    32 * d.s_prime,
+    d.s_prime,
+    format!("32·s' ({})", d.s_prime),
+  );
+  add(
+    "running",
+    "v",
+    32 * (d.t + 1),
+    d.t + 1,
+    format!("32·(t+1) ({})", d.t + 1),
+  );
   add("incoming", "k", 8, 0, "8".into());
   add("incoming", "comm_W", 32, 1, "32".into());
-  add("incoming", "io", 32 * d.num_io, d.num_io, format!("32·num_io ({})", d.num_io));
+  add(
+    "incoming",
+    "io",
+    32 * d.num_io,
+    d.num_io,
+    format!("32·num_io ({})", d.num_io),
+  );
   add("cf_instance", "comm_W, comm_E", 64, 2, "64".into());
   add("cf_instance", "u", 32, 1, "32".into());
-  add("cf_instance", "X", 32 * d.n_cf, d.n_cf, format!("32·n_cf ({})", d.n_cf));
+  add(
+    "cf_instance",
+    "X",
+    32 * d.n_cf,
+    d.n_cf,
+    format!("32·n_cf ({})", d.n_cf),
+  );
   let sx = d.s * (d.deg_x + 1);
   add(
     "fold_proof",
@@ -611,7 +644,13 @@ pub fn account<V: FinalVariant>(
     sx,
     format!("32·s·(deg_x+1) ({}·{})", d.s, d.deg_x + 1),
   );
-  add("fold_proof", "sigma, tau", 64 * d.t, 2 * d.t, format!("2·32·t ({})", d.t));
+  add(
+    "fold_proof",
+    "sigma, tau",
+    64 * d.t,
+    2 * d.t,
+    format!("2·32·t ({})", d.t),
+  );
   add(
     "fold_proof",
     "sc_y",
@@ -639,8 +678,20 @@ pub fn account<V: FinalVariant>(
     },
   );
   let sp = d.s_prime;
-  add("witness_opening", "IPA L_vec", 8 + 32 * sp, sp, format!("8 + 32·s' ({sp})"));
-  add("witness_opening", "IPA R_vec", 8 + 32 * sp, sp, format!("8 + 32·s' ({sp})"));
+  add(
+    "witness_opening",
+    "IPA L_vec",
+    8 + 32 * sp,
+    sp,
+    format!("8 + 32·s' ({sp})"),
+  );
+  add(
+    "witness_opening",
+    "IPA R_vec",
+    8 + 32 * sp,
+    sp,
+    format!("8 + 32·s' ({sp})"),
+  );
   add("witness_opening", "IPA a_hat", 32, 1, "32".into());
   let fields = p.cf_snark.field_bytes().map_err(CompressError::from)?;
   let nx = d.n_cf_rows.trailing_zeros() as usize;
@@ -649,7 +700,10 @@ pub fn account<V: FinalVariant>(
       "sc_proof_outer" => (format!("8 + log n_cf_rows·(8 + 3·32) ({nx})"), 3 * nx),
       "claims_outer" => ("3·32".into(), 3),
       "eval_E" | "eval_W" => ("32".into(), 1),
-      "sc_proof_inner" => (format!("8 + (log n_cf_rows + 1)·(8 + 2·32) ({nx})"), 2 * (nx + 1)),
+      "sc_proof_inner" => (
+        format!("8 + (log n_cf_rows + 1)·(8 + 2·32) ({nx})"),
+        2 * (nx + 1),
+      ),
       "sc_proof_batch" => (format!("8 + log n_cf_rows·(8 + 2·32) ({nx})"), 2 * nx),
       "evals_batch" => ("8 + 2·32".into(), 2),
       "eval_arg" => (format!("2·(8 + 32·log n_cf_rows) + 32 ({nx})"), 2 * nx + 1),
@@ -785,8 +839,8 @@ pub fn read_material(
   if hl > MAX_HEADER_BYTES {
     return Err(bad("header length".into()));
   }
-  let header: MaterialHeader = bincode_exact(&read_exact_vec(r, hl, "header")?, "header")
-    .map_err(|e| bad(format!("{e}")))?;
+  let header: MaterialHeader =
+    bincode_exact(&read_exact_vec(r, hl, "header")?, "header").map_err(|e| bad(format!("{e}")))?;
   let k = read_u64(r, "member count")?;
   if k == 0 || k > MAX_MEMBERS {
     return Err(bad(format!("{k} members")));
