@@ -212,6 +212,92 @@ struct PpDigestView<'a> {
 
 impl SimpleDigestible for PpDigestView<'_> {}
 
+/// The pp digest of the tree layer from its parts (shared by `setup` and the P7 final verifier,
+/// which recomputes it from the public material). K = K_leaf + 2.
+pub(crate) fn tree_pp_digest<E1: Engine, E2: Engine>(
+  variant: &str,
+  tpl: PrimaryTemplate,
+  a: usize,
+  k_leaf: usize,
+  arity: usize,
+  family_digest: E1::Scalar,
+  cf_shape: &R1CSShape<E2>,
+) -> Result<E1::Scalar, std::io::Error> {
+  let view = PpDigestView {
+    version: PCD_VERSION,
+    variant,
+    template: tpl,
+    a,
+    k_leaf,
+    k: k_leaf + 2,
+    arity,
+    beta: BETA,
+    range_bits: RANGE_BITS,
+    family_digest: format!("{family_digest:?}"),
+    cf_shape_digest: format!("{:?}", cf_shape.digest()),
+    cf_ck_label: TREE_CF_CK_LABEL,
+    cf_ck_len: cf_shape.num_cons.max(cf_shape.num_vars),
+  };
+  DigestComputer::<E1::Scalar, _>::new(&view).digest()
+}
+
+/// The node link hash (native twin of `circuit::link_hash`) from the pp digest and the family
+/// digest (shared by [`TreeParams::link_hash`] and the P7 final verifier).
+pub(crate) fn tree_link_hash<E1, E2, V>(
+  pp_digest: E1::Scalar,
+  hfs_digest: E1::Scalar,
+  ctx: &TaskCtx<E1::Scalar>,
+  s: &NodeStatement<E1::Scalar>,
+  run: &RunningInstance<E1, V>,
+  cf: &RelaxedR1CSInstance<E2>,
+) -> E1::Scalar
+where
+  E1: Engine<Base = <E2 as Engine>::Scalar>,
+  E2: Engine<Base = <E1 as Engine>::Scalar>,
+  V: IvcVariant<E1>,
+{
+  let mut ro = E1::RO2::new(Default::default());
+  ro.absorb(E1::Scalar::from(TAG_TREE_LINK));
+  for x in [
+    pp_digest,
+    hfs_digest,
+    ctx.task_id,
+    E1::Scalar::from(ctx.num_leaves),
+    E1::Scalar::from(s.lo),
+    E1::Scalar::from(s.hi),
+  ] {
+    ro.absorb(x);
+  }
+  s.result.iter().for_each(|x| ro.absorb(*x));
+  ro.absorb(s.tree_hash);
+  absorb_commitment::<E1>(&mut ro, &run.comm_w);
+  V::absorb_running_index(&mut ro, &run.index);
+  ro.absorb(run.u);
+  run
+    .io
+    .iter()
+    .chain(&run.r_x)
+    .chain(&run.r_y)
+    .chain(&run.v)
+    .for_each(|x| ro.absorb(*x));
+  for c in [&cf.comm_W, &cf.comm_E] {
+    let (x, y, inf) = c.to_coordinates();
+    ro.absorb(x);
+    ro.absorb(y);
+    ro.absorb(if inf {
+      E1::Scalar::ONE
+    } else {
+      E1::Scalar::ZERO
+    });
+  }
+  for x in std::iter::once(&cf.u).chain(&cf.X) {
+    for l in limbs_of::<E2::Scalar, E1::Scalar>(x) {
+      ro.absorb(l);
+    }
+  }
+  ro.squeeze(NUM_HASH_BITS)
+}
+
 /// Public parameters of the tree PCD for a leaf family and arity a.
 pub struct TreeParams<E1, E2, V>
 where
@@ -495,24 +581,9 @@ where
         return Err(TreeError::Setup("index commitments changed".into()));
       }
     }
-    let view = PpDigestView {
-      version: PCD_VERSION,
-      variant: V::NAME,
-      template: tpl,
-      a,
-      k_leaf,
-      k,
-      arity,
-      beta: BETA,
-      range_bits: RANGE_BITS,
-      family_digest: format!("{:?}", family.digest()),
-      cf_shape_digest: format!("{:?}", cf_shape.digest()),
-      cf_ck_label: TREE_CF_CK_LABEL,
-      cf_ck_len: cf_shape.num_cons.max(cf_shape.num_vars),
-    };
-    let pp_digest = DigestComputer::<E1::Scalar, _>::new(&view)
-      .digest()
-      .map_err(|e| TreeError::Setup(format!("digest: {e}")))?;
+    let pp_digest =
+      tree_pp_digest::<E1, E2>(V::NAME, tpl, a, k_leaf, arity, family.digest(), &cf_shape)
+        .map_err(|e| TreeError::Setup(format!("digest: {e}")))?;
 
     let report = TreeSetupReport {
       a,
@@ -636,6 +707,16 @@ where
     self.tpl
   }
 
+  /// State arity of the leaf predicates (length of a node result).
+  pub fn arity(&self) -> usize {
+    self.arity
+  }
+
+  /// The CycleFold commitment key (P7: Spartan proves the CycleFold accumulator under it).
+  pub(crate) fn cyclefold_key(&self) -> &CommitmentKey<E2> {
+    &self.ck_cf
+  }
+
   fn ctx(&self, c: &TaskCtx<E1::Scalar>) -> Ctx<E1::Scalar> {
     Ctx {
       pp_digest: self.pp_digest,
@@ -675,46 +756,7 @@ where
     run: &RunningInstance<E1, V>,
     cf: &RelaxedR1CSInstance<E2>,
   ) -> E1::Scalar {
-    let mut ro = E1::RO2::new(Default::default());
-    ro.absorb(E1::Scalar::from(TAG_TREE_LINK));
-    for x in [
-      self.pp_digest,
-      self.hfs.digest(),
-      ctx.task_id,
-      E1::Scalar::from(ctx.num_leaves),
-      E1::Scalar::from(s.lo),
-      E1::Scalar::from(s.hi),
-    ] {
-      ro.absorb(x);
-    }
-    s.result.iter().for_each(|x| ro.absorb(*x));
-    ro.absorb(s.tree_hash);
-    absorb_commitment::<E1>(&mut ro, &run.comm_w);
-    V::absorb_running_index(&mut ro, &run.index);
-    ro.absorb(run.u);
-    run
-      .io
-      .iter()
-      .chain(&run.r_x)
-      .chain(&run.r_y)
-      .chain(&run.v)
-      .for_each(|x| ro.absorb(*x));
-    for c in [&cf.comm_W, &cf.comm_E] {
-      let (x, y, inf) = c.to_coordinates();
-      ro.absorb(x);
-      ro.absorb(y);
-      ro.absorb(if inf {
-        E1::Scalar::ONE
-      } else {
-        E1::Scalar::ZERO
-      });
-    }
-    for x in std::iter::once(&cf.u).chain(&cf.X) {
-      for l in limbs_of::<E2::Scalar, E1::Scalar>(x) {
-        ro.absorb(l);
-      }
-    }
-    ro.squeeze(NUM_HASH_BITS)
+    tree_link_hash::<E1, E2, V>(self.pp_digest, self.hfs.digest(), ctx, s, run, cf)
   }
 
   /// The statement a correct tree for `task` must prove at its root (computed from the task
@@ -1292,6 +1334,16 @@ where
   #[doc(hidden)]
   pub fn running(&self) -> (&RunningInstance<E1, V>, &RunningWitness<E1>) {
     (&self.r_u, &self.r_w)
+  }
+
+  /// The node's own CCCS and its witness (P7 compressor).
+  pub(crate) fn own_incoming(&self) -> (&IncomingInstance<E1>, &[E1::Scalar]) {
+    (&self.l_u, &self.l_w)
+  }
+
+  /// The CycleFold accumulator and its witness (P7 compressor).
+  pub(crate) fn cyclefold(&self) -> (&RelaxedR1CSInstance<E2>, &RelaxedR1CSWitness<E2>) {
+    (&self.cf_u, &self.cf_w)
   }
 }
 

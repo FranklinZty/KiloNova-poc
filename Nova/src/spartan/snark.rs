@@ -89,6 +89,28 @@ pub struct RelaxedR1CSSNARK<E: Engine, EE: EvaluationEngineTrait<E>> {
   eval_arg: EE::EvaluationArgument,
 }
 
+impl<E: Engine, EE: EvaluationEngineTrait<E>> RelaxedR1CSSNARK<E, EE> {
+  /// Serialized size of each field (bincode legacy, the encoding of the whole struct is the
+  /// concatenation of its fields), in field order. Used by the kilonova proof-size account (P7).
+  pub fn field_bytes(&self) -> Result<Vec<(&'static str, usize)>, NovaError> {
+    fn len<T: Serialize>(v: &T) -> Result<usize, NovaError> {
+      bincode::serde::encode_to_vec(v, bincode::config::legacy())
+        .map(|b| b.len())
+        .map_err(|_| NovaError::InternalError)
+    }
+    Ok(vec![
+      ("sc_proof_outer", len(&self.sc_proof_outer)?),
+      ("claims_outer", len(&self.claims_outer)?),
+      ("eval_E", len(&self.eval_E)?),
+      ("sc_proof_inner", len(&self.sc_proof_inner)?),
+      ("eval_W", len(&self.eval_W)?),
+      ("sc_proof_batch", len(&self.sc_proof_batch)?),
+      ("evals_batch", len(&self.evals_batch)?),
+      ("eval_arg", len(&self.eval_arg)?),
+    ])
+  }
+}
+
 impl<E: Engine, EE: EvaluationEngineTrait<E>> RelaxedR1CSSNARKTrait<E> for RelaxedR1CSSNARK<E, EE> {
   type ProverKey = ProverKey<E, EE>;
   type VerifierKey = VerifierKey<E, EE>;

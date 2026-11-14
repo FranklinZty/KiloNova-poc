@@ -257,6 +257,19 @@ impl<E: Engine> HfsParams<E> {
     shapes: Vec<CcsShape<E::Scalar>>,
     family_digest: Option<E::Scalar>,
   ) -> Result<Self, HfsError> {
+    Self::build_with_ck_len(template, shapes, family_digest, None)
+  }
+
+  /// [`Self::build`] whose witness key has `max(num_w, 1, ck_len)` generators (P7: the final
+  /// verifier derives the key once at the IPA size 2^{s'}). The generators come from one SHAKE
+  /// stream, so the first `num_w` are the HFS key and every commitment is unchanged; the digest
+  /// still records `max(num_w, 1)`.
+  pub(crate) fn build_with_ck_len(
+    template: CcsTemplate<E::Scalar>,
+    shapes: Vec<CcsShape<E::Scalar>>,
+    family_digest: Option<E::Scalar>,
+    ck_len_override: Option<usize>,
+  ) -> Result<Self, HfsError> {
     // Re-validate: the fields are private, but a deserialised template is not trusted.
     let template = CcsTemplate::new(
       template.t,
@@ -287,7 +300,7 @@ impl<E: Engine> HfsParams<E> {
     let s_prime = num_vars(first.n());
     let ck_len = first.num_w.max(1);
     let ck_index_len = t * k;
-    let ck = E::CE::setup(CK_LABEL, ck_len);
+    let ck = E::CE::setup(CK_LABEL, ck_len.max(ck_len_override.unwrap_or(0)));
     let ck_index = E::CE::setup(CK_INDEX_LABEL, ck_index_len);
     let digest = match family_digest {
       Some(d) => d,
@@ -381,6 +394,11 @@ impl<E: Engine> HfsParams<E> {
   /// ι_k = (Com(ck_index[j], e_k))_j.
   pub fn iota(&self, k: usize) -> &[Commitment<E>] {
     &self.iota[k]
+  }
+
+  /// The witness commitment key (P7: the IPA opens `comm_W` against an extension of it).
+  pub(crate) fn ck(&self) -> &CommitmentKey<E> {
+    &self.ck
   }
 
   pub(crate) fn ro_consts(&self) -> &RO2Constants<E> {

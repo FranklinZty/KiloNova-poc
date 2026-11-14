@@ -95,6 +95,107 @@ pub fn encode_member<F: PrimeField>(template: &CcsTemplate<F>, shape: &CcsShape<
   out
 }
 
+struct ByteReader<'a> {
+  bytes: &'a [u8],
+  pos: usize,
+}
+
+impl<'a> ByteReader<'a> {
+  fn take(&mut self, n: usize) -> Result<&'a [u8], HfsError> {
+    let end = self
+      .pos
+      .checked_add(n)
+      .filter(|&e| e <= self.bytes.len())
+      .ok_or_else(|| HfsError::InvalidFamily("member encoding: truncated".into()))?;
+    let out = &self.bytes[self.pos..end];
+    self.pos = end;
+    Ok(out)
+  }
+
+  fn int(&mut self) -> Result<usize, HfsError> {
+    let b: [u8; 8] = self.take(8)?.try_into().expect("8 bytes");
+    usize::try_from(u64::from_le_bytes(b))
+      .map_err(|_| HfsError::InvalidFamily("member encoding: integer too large".into()))
+  }
+
+  fn field<F: PrimeField>(&mut self) -> Result<F, HfsError> {
+    let mut repr = F::Repr::default();
+    let n = repr.as_ref().len();
+    repr.as_mut().copy_from_slice(self.take(n)?);
+    Option::from(F::from_repr(repr)).ok_or_else(|| {
+      HfsError::InvalidFamily("member encoding: non-canonical field element".into())
+    })
+  }
+
+  fn remaining_words(&self) -> usize {
+    (self.bytes.len() - self.pos) / 8
+  }
+}
+
+/// Parses a canonical member encoding ([`encode_member`]) strictly: magic, counts, canonical
+/// field elements, entries strictly sorted by (row, col), no zero values, entries in range and
+/// nothing trailing, so `encode_member(decode_member(b)) == b` for every accepted `b`. P7: the
+/// final verifier reconstructs the family matrices from the public material file with it.
+pub fn decode_member<F: PrimeField>(
+  bytes: &[u8],
+) -> Result<(CcsTemplate<F>, CcsShape<F>), HfsError> {
+  let bad = |w: &str| HfsError::InvalidFamily(format!("member encoding: {w}"));
+  let mut r = ByteReader { bytes, pos: 0 };
+  if r.take(MAGIC.len())? != MAGIC {
+    return Err(bad("magic"));
+  }
+  let (m, num_w, num_io, t, q) = (r.int()?, r.int()?, r.int()?, r.int()?, r.int()?);
+  let n = num_w
+    .checked_add(1)
+    .and_then(|x| x.checked_add(num_io))
+    .ok_or_else(|| bad("dimensions"))?;
+  // every term and entry takes at least 8 bytes, so counts are bounded by the input length
+  if q > r.remaining_words() || t > r.remaining_words() {
+    return Err(bad("counts"));
+  }
+  let mut coeffs = Vec::with_capacity(q);
+  let mut multisets = Vec::with_capacity(q);
+  for _ in 0..q {
+    coeffs.push(r.field::<F>()?);
+    let len = r.int()?;
+    if len > r.remaining_words() {
+      return Err(bad("multiset length"));
+    }
+    multisets.push((0..len).map(|_| r.int()).collect::<Result<Vec<_>, _>>()?);
+  }
+  let template = CcsTemplate::new(t, multisets, coeffs)?;
+  let mut matrices = Vec::with_capacity(t);
+  for _ in 0..t {
+    let nnz = r.int()?;
+    if nnz > r.remaining_words() {
+      return Err(bad("nnz"));
+    }
+    let mut entries: Entries<F> = Vec::with_capacity(nnz);
+    for _ in 0..nnz {
+      let (row, col) = (r.int()?, r.int()?);
+      let v = r.field::<F>()?;
+      if row >= m || col >= n {
+        return Err(bad("entry out of range"));
+      }
+      if bool::from(v.is_zero()) {
+        return Err(bad("zero entry"));
+      }
+      if let Some(last) = entries.last() {
+        if (last.0, last.1) >= (row, col) {
+          return Err(bad("entries not strictly sorted"));
+        }
+      }
+      entries.push((row, col, v));
+    }
+    matrices.push(entries);
+  }
+  if r.pos != bytes.len() {
+    return Err(bad("trailing bytes"));
+  }
+  let shape = CcsShape::new(m, num_w, num_io, matrices)?;
+  Ok((template, shape))
+}
+
 /// `SHA3-256` of the canonical encoding, streamed (the encoding is never materialised).
 pub fn member_digest<F: PrimeField>(template: &CcsTemplate<F>, shape: &CcsShape<F>) -> [u8; 32] {
   let mut h = Sha3_256::new();
@@ -337,6 +438,21 @@ impl<F: PrimeField> PredicateFamily<F> {
     self,
   ) -> Result<(HfsParams<E>, FamilyMeta<F>), HfsError> {
     let pp = HfsParams::<E>::build(self.template, self.shapes, Some(self.meta.digest))?;
+    Ok((pp, self.meta))
+  }
+
+  /// [`Self::into_hfs_params`] with a witness key of at least `ck_len` generators (P7 final
+  /// verifier: one key derivation at the IPA size; commitments and digests are unchanged).
+  pub(crate) fn into_hfs_params_with_ck_len<E: Engine<Scalar = F>>(
+    self,
+    ck_len: usize,
+  ) -> Result<(HfsParams<E>, FamilyMeta<F>), HfsError> {
+    let pp = HfsParams::<E>::build_with_ck_len(
+      self.template,
+      self.shapes,
+      Some(self.meta.digest),
+      Some(ck_len),
+    )?;
     Ok((pp, self.meta))
   }
 }

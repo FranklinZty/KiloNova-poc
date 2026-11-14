@@ -119,7 +119,7 @@ where
   E: Engine,
   E::GE: DlogGroup,
 {
-  fn new(comm_a_vec: &Commitment<E>, b_vec: &[E::Scalar], c: &E::Scalar) -> Self {
+  pub(crate) fn new(comm_a_vec: &Commitment<E>, b_vec: &[E::Scalar], c: &E::Scalar) -> Self {
     InnerProductInstance {
       comm_a_vec: *comm_a_vec,
       b_vec: b_vec.to_vec(),
@@ -139,12 +139,12 @@ impl<E: Engine> TranscriptReprTrait<E::GE> for InnerProductInstance<E> {
   }
 }
 
-struct InnerProductWitness<E: Engine> {
+pub(crate) struct InnerProductWitness<E: Engine> {
   a_vec: Vec<E::Scalar>,
 }
 
 impl<E: Engine> InnerProductWitness<E> {
-  fn new(a_vec: &[E::Scalar]) -> Self {
+  pub(crate) fn new(a_vec: &[E::Scalar]) -> Self {
     InnerProductWitness {
       a_vec: a_vec.to_vec(),
     }
@@ -170,7 +170,7 @@ where
     b"IPA"
   }
 
-  fn prove(
+  pub(crate) fn prove(
     ck: &CommitmentKey<E>,
     ck_c: &CommitmentKey<E>,
     U: &InnerProductInstance<E>,
@@ -282,7 +282,7 @@ where
     })
   }
 
-  fn verify(
+  pub(crate) fn verify(
     &self,
     ck: &CommitmentKey<E>,
     ck_c: &CommitmentKey<E>,

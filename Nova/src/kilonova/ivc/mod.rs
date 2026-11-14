@@ -268,6 +268,84 @@ struct PpDigestView<'a> {
 
 impl SimpleDigestible for PpDigestView<'_> {}
 
+/// The pp digest of the chain layer from its parts (shared by `setup` and the P7 final
+/// verifier, which recomputes it from the public material).
+pub(crate) fn chain_pp_digest<E1: Engine, E2: Engine>(
+  variant: &str,
+  tpl: PrimaryTemplate,
+  arity: usize,
+  k: usize,
+  family_digest: E1::Scalar,
+  cf_shape: &R1CSShape<E2>,
+) -> Result<E1::Scalar, std::io::Error> {
+  let view = PpDigestView {
+    version: IVC_VERSION,
+    variant,
+    template: tpl,
+    arity,
+    k,
+    family_digest: format!("{family_digest:?}"),
+    cf_shape_digest: format!("{:?}", cf_shape.digest()),
+    cf_ck_label: CF_CK_LABEL,
+    cf_ck_len: cf_shape.num_cons.max(cf_shape.num_vars),
+  };
+  DigestComputer::<E1::Scalar, _>::new(&view).digest()
+}
+
+/// The chain link hash (native twin of `circuit::link_hash`) from the pp digest and the family
+/// digest (shared by [`PublicParams::link_hash`] and the P7 final verifier).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chain_link_hash<E1, E2, V>(
+  pp_digest: E1::Scalar,
+  hfs_digest: E1::Scalar,
+  i: usize,
+  z0: &[E1::Scalar],
+  zi: &[E1::Scalar],
+  trace: E1::Scalar,
+  run: &RunningInstance<E1, V>,
+  cf: &RelaxedR1CSInstance<E2>,
+) -> E1::Scalar
+where
+  E1: Engine<Base = <E2 as Engine>::Scalar>,
+  E2: Engine<Base = <E1 as Engine>::Scalar>,
+  V: IvcVariant<E1>,
+{
+  let mut ro = E1::RO2::new(Default::default());
+  ro.absorb(E1::Scalar::from(TAG_LINK));
+  ro.absorb(pp_digest);
+  ro.absorb(hfs_digest);
+  ro.absorb(E1::Scalar::from(i as u64));
+  z0.iter().chain(zi).for_each(|z| ro.absorb(*z));
+  ro.absorb(trace);
+  absorb_commitment::<E1>(&mut ro, &run.comm_w);
+  V::absorb_running_index(&mut ro, &run.index);
+  ro.absorb(run.u);
+  run
+    .io
+    .iter()
+    .chain(&run.r_x)
+    .chain(&run.r_y)
+    .chain(&run.v)
+    .for_each(|x| ro.absorb(*x));
+  for c in [&cf.comm_W, &cf.comm_E] {
+    let (x, y, inf) = c.to_coordinates();
+    ro.absorb(x);
+    ro.absorb(y);
+    ro.absorb(if inf {
+      E1::Scalar::ONE
+    } else {
+      E1::Scalar::ZERO
+    });
+  }
+  ro.absorb(scalar_as_base::<E2>(cf.u));
+  for x in &cf.X {
+    for l in to_bignat_repr::<E2::Scalar, E1::Scalar>(x) {
+      ro.absorb(l);
+    }
+  }
+  ro.squeeze(NUM_HASH_BITS)
+}
+
 /// Public parameters of the v2 recursion for a family of K predicates.
 pub struct PublicParams<E1, E2, V>
 where
@@ -459,19 +537,7 @@ where
 
     // the HFS transcript digest is the family digest (`HfsParams` built from the family)
     debug_assert_eq!(hfs.digest(), family.digest());
-    let view = PpDigestView {
-      version: IVC_VERSION,
-      variant: V::NAME,
-      template: tpl,
-      arity,
-      k,
-      family_digest: format!("{:?}", family.digest()),
-      cf_shape_digest: format!("{:?}", cf_shape.digest()),
-      cf_ck_label: CF_CK_LABEL,
-      cf_ck_len: cf_shape.num_cons.max(cf_shape.num_vars),
-    };
-    let pp_digest = DigestComputer::<E1::Scalar, _>::new(&view)
-      .digest()
+    let pp_digest = chain_pp_digest::<E1, E2>(V::NAME, tpl, arity, k, family.digest(), &cf_shape)
       .map_err(|e| IvcError::Setup(format!("digest: {e}")))?;
 
     let report = IvcSetupReport {
@@ -538,6 +604,16 @@ where
     self.primary.n_cf
   }
 
+  /// State arity.
+  pub fn arity(&self) -> usize {
+    self.arity
+  }
+
+  /// The CycleFold commitment key (P7: Spartan proves the CycleFold accumulator under it).
+  pub(crate) fn cyclefold_key(&self) -> &CommitmentKey<E2> {
+    &self.ck_cf
+  }
+
   fn cf_circuit(&self, inputs: Option<CycleFoldInputs<E1>>) -> CycleFoldCircuit<'_, E1> {
     CycleFoldCircuit {
       iota: &self.iota,
@@ -573,40 +649,16 @@ where
     run: &RunningInstance<E1, V>,
     cf: &RelaxedR1CSInstance<E2>,
   ) -> E1::Scalar {
-    let mut ro = E1::RO2::new(Default::default());
-    ro.absorb(E1::Scalar::from(TAG_LINK));
-    ro.absorb(self.pp_digest);
-    ro.absorb(self.hfs.digest());
-    ro.absorb(E1::Scalar::from(i as u64));
-    z0.iter().chain(zi).for_each(|z| ro.absorb(*z));
-    ro.absorb(trace);
-    absorb_commitment::<E1>(&mut ro, &run.comm_w);
-    V::absorb_running_index(&mut ro, &run.index);
-    ro.absorb(run.u);
-    run
-      .io
-      .iter()
-      .chain(&run.r_x)
-      .chain(&run.r_y)
-      .chain(&run.v)
-      .for_each(|x| ro.absorb(*x));
-    for c in [&cf.comm_W, &cf.comm_E] {
-      let (x, y, inf) = c.to_coordinates();
-      ro.absorb(x);
-      ro.absorb(y);
-      ro.absorb(if inf {
-        E1::Scalar::ONE
-      } else {
-        E1::Scalar::ZERO
-      });
-    }
-    ro.absorb(scalar_as_base::<E2>(cf.u));
-    for x in &cf.X {
-      for l in to_bignat_repr::<E2::Scalar, E1::Scalar>(x) {
-        ro.absorb(l);
-      }
-    }
-    ro.squeeze(NUM_HASH_BITS)
+    chain_link_hash::<E1, E2, V>(
+      self.pp_digest,
+      self.hfs.digest(),
+      i,
+      z0,
+      zi,
+      trace,
+      run,
+      cf,
+    )
   }
 
   fn default_running(&self) -> (RunningInstance<E1, V>, RunningWitness<E1>) {
@@ -1088,6 +1140,21 @@ where
   #[doc(hidden)]
   pub fn last_incoming(&self) -> (&IncomingInstance<E1>, &[E1::Scalar]) {
     (&self.l_u, &self.l_w)
+  }
+
+  /// Initial state `z_0`.
+  pub fn z0(&self) -> &[E1::Scalar] {
+    &self.z0
+  }
+
+  /// The trace hash `H_trace*(k_0, …, k_{i−1})` of the steps proven so far.
+  pub fn trace(&self) -> E1::Scalar {
+    self.trace
+  }
+
+  /// The CycleFold accumulator and its witness (P7 compressor).
+  pub(crate) fn cyclefold(&self) -> (&RelaxedR1CSInstance<E2>, &RelaxedR1CSWitness<E2>) {
+    (&self.cf_u, &self.cf_w)
   }
 }
 
