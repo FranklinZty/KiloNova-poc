@@ -1,10 +1,10 @@
-# P7 report: independent final verification and compression (2026-11-14) — DRAFT
+# P7 report: independent final verification and compression (2026-11-14; completed 2026-11-16)
 
-**Draft:** the definition-of-done suite was stopped by the user before it completed (§4); figures in §3 come from the records and the tests that did run.
+The definition of done was re-run in full at `9fc575e` on 2026-11-16 (§4), and the 8 records missing after the stopped campaign were added the same day (§3.4).
 
 PLAN.md §3 P7. Plan: `docs/P7-plan.md`. Spec: `docs/protocol-spec.md` §12. Claim map: `docs/claim-check-map.md` §9. Branch `p7-compress` (from `origin/p6-pcd` `f5682da`); commits in §8.
 
-**Status: P7a (`reference-basis-decider`) done for chains and trees (a = 2), Direct and Span. P7b (Spark-style sparse holographic evaluation with terminal recursive binding) is not implemented and was not started. Per PLAN.md P7, P7 as a whole is therefore NOT done.** The record campaign was **stopped early on the user's request** (§3.4 lists the missing records). No independent review yet (PLAN.md §2). Nothing here is a performance or security claim; timings come from the 16 GB development laptop (Apple M4, fanless) and are for orientation only.
+**Status: P7a (`reference-basis-decider`) done for chains and trees (a = 2), Direct and Span. P7b (Spark-style sparse holographic evaluation with terminal recursive binding) is not implemented and was not started. Per PLAN.md P7, P7 as a whole is therefore NOT done.** The record campaign was stopped early on the user's request on 2026-11-14; the missing configurations were run on 2026-11-16, so all 36 planned records exist (§3.4). No independent review yet (PLAN.md §2). Nothing here is a performance or security claim; timings come from the 16 GB development laptop (Apple M4, fanless) and are for orientation only.
 
 ## 1. What was built
 
@@ -70,7 +70,7 @@ Tests: `cargo test -p nova-snark --release --lib kilonova::compress -- --test-th
 | cf_snark (Spartan) | 4,432 | 4,432 | 3,808 | 4,744 | 4,120 | `Dims::spartan_bytes`, log₂(CycleFold rows) = 13 / 13 / 11 / 14 / 12 |
 | **total** | **12,455** | **12,519** | **11,319** | **13,463** | **12,103** | |
 
-Parameters: chain s = s′ = 17 (m = 121,284, num_w = 121,278), t = 3, deg_x = 3, n_cf = 20 (Direct) / 7 (Span); tree s = s′ = 18 (m = 227,923), n_cf = 31 (Direct) / 11 (Span). **Dependence:** K enters only through λ (32·K bytes: Direct revealed λ*, Span running λ); N and the matrix dimensions only logarithmically through s, s′ (sum-check rounds, IPA rounds); the CycleFold size (which grows weakly with K and with a) through n_cf and log₂ of its rows. K = 16 was **not measured** (campaign stopped); by the formula a chain Direct K = 16 proof is 12,455 + 32·14 = 12,903 bytes if s, s′ and the CycleFold size stay as at K = 2/4 (P4 measured identical (s, s′) and CycleFold 5,116 raw rows → 8,192 padded at K = 16), but this is a formula value, not a record. Comparison (§7.2): the uncompressed checkpoints are 8,288,768 B (chain Direct), 5,762,368 B (chain Span), 15,627,400 B (tree Direct root).
+Parameters: chain s = s′ = 17 (m = 121,284, num_w = 121,278), t = 3, deg_x = 3, n_cf = 20 (Direct) / 7 (Span); tree s = s′ = 18 (m = 227,923), n_cf = 31 (Direct) / 11 (Span). **Dependence:** K enters only through λ (32·K bytes: Direct revealed λ*, Span running λ); N and the matrix dimensions only logarithmically through s, s′ (sum-check rounds, IPA rounds); the CycleFold size (which grows weakly with K and with a) through n_cf and log₂ of its rows. K = 16 (record of 2026-11-16): the chain Direct proof is **12,903 bytes**, exactly the formula value 12,455 + 32·14 (s, s′ and the padded CycleFold size are unchanged from K = 2/4). Tree Span a = 2: 12,103 bytes. Comparison (§7.2): the uncompressed checkpoints are 8,288,768 B (chain Direct), 5,762,368 B (chain Span), 15,627,400 B (tree Direct root).
 
 ### 3.3 Times and memory (`results/raw/p7-compress.jsonl`, `--threads 1`, every record `status = success`)
 
@@ -80,16 +80,19 @@ Parameters: chain s = s′ = 17 (m = 121,284, num_w = 121,278), t = 3, deg_x = 3
 | tree Direct a = 2, L = 8 (101, 202, 303) | 43–57 s | 30–32 s | 45–50 s | **57 s** | **3.25–3.27 s** | **53–55 s** | 49–52 s / 3.3–3.4 s | 1.12–1.17 / 0.74–0.79 GiB | 261 MB |
 | chain Direct K = 4 (101) | 28–39 s | 38 s | 28 s | **37 s** | **1.56 s** | **35 s** | 34 s / 1.5 s | 1.47 / 0.88 GiB | 531 MB |
 | chain Span K = 2 (101) | 20–22 s | 24 s | 36 s | **37 s** | **1.06 s** | ~~46 s~~ **not usable** (see note) | 45 s / 1.2 s | 0.80 / 0.57 GiB | 214 MB |
+| tree Span a = 2, L = 8 (101) | 27 s | 28 s | 50 s | **58 s** | **3.08 s** | **61 s** | 57 s / 3.3 s | 0.74 / 0.55 GiB | 169 MB |
+| chain Direct K = 16 (101) | 67 s | 43 s | 38 s | **40 s** | **3.19 s** (reps 3.06, 3.19, 4.84 s) | **96 s** | 91 s / 4.8 s | 2.59 / 2.27 GiB (setup 3.04 GiB) | 2.12 GB |
 
 - "compress" = `compression_ms`: final fold + IPA prove (2^{s′} vector) + Spartan prove, single-threaded; "compressor key" (witness key at 2^{s′} generators by hash-to-curve, Spartan setup) is reported separately in `details.compressor_key_ms` and is a one-off per parameter set.
 - **Cold** = from opening the files to the verdict: material decode (canonical member parsing), member/family/CycleFold/pp digests, key derivation from labels (the 2^{s′}-generator hash-to-curve dominates), Spartan vk, then verify-final. **Warm** = verify-final only with the key and proof preloaded: final fold verify, Direct index re-commitment, reference-basis evaluation over every member (K·nnz), IPA verify (MSM over 2^{s′}), Spartan verify.
-- **K dependence (measured, Direct chains):** warm 1.12–1.45 s (K = 2, N_total = 5.52 M) → 1.56 s (K = 4, N_total = 11.04 M); cold 27–31 s → 35 s; material 266 MB → 531 MB (linear in Σ_k nnz, 48 B per entry). The reference-basis evaluation is the only K-linear term of verify-final; IPA and Spartan are K-independent here.
+- **K dependence (measured, Direct chains):** warm 1.12–1.45 s (K = 2, N_total = 5.52 M) → 1.56 s (K = 4, N_total = 11.04 M) → 3.19 s (K = 16, N_total = 44.2 M); cold 27–31 s → 35 s → 96 s; material 266 MB → 531 MB → 2.12 GB; proof 12,455 → 12,519 → 12,903 B (32 B per member) (linear in Σ_k nnz, 48 B per entry). The reference-basis evaluation is the only K-linear term of verify-final; IPA and Spartan are K-independent here.
 - **Note — not usable for timing:** the record chain Span K = 2 seed 101 `mode=cold` (`20261114T093145Z-a109d5d3`) ran while the process was paused by the user with SIGSTOP for about 30 s; its wall-clock `verify_cold_ms` (46.3 s) is inflated (CPU time unaffected). Its verdict (accepted) is valid.
-- One record carries `implementation_dirty = true`: chain Direct K = 2 seed 101 `compress-prove` (`20261114T085345Z-87583ac1`), because documentation was being edited while it ran (no code change). Records before it are at `453e403`, records after it at `e40b421`; the two commits differ only in documentation.
+- **The 2026-11-16 records** (tree Span a = 2, chain Direct K = 16) were taken at `9fc575e` with no source or documentation edits. 7 of the 8 carry `implementation_dirty = true` only because kn-run's dirty check (`git status --porcelain --untracked-files=no`) sees the tracked `results/raw/p7-compress.jsonl` itself, modified by the first new record. This is a harness artifact, not a code difference.
+- One 2026-11-14 record carries `implementation_dirty = true`: chain Direct K = 2 seed 101 `compress-prove` (`20261114T085345Z-87583ac1`), because documentation was being edited while it ran (no code change). Records before it are at `453e403`, records after it at `e40b421`; the two commits differ only in documentation.
 
 ### 3.4 Records: planned vs present
 
-The campaign script is `results/raw/logs/p7-compress-campaign.sh`, its log is `results/raw/logs/p7-compress-campaign.log`. **The user stopped the campaign** while `compress-setup` for the tree Span a = 2 configuration was running. That job wrote no record; its log stub `20261114T093300Z-bcfd22a8.{out,err}` is kept.
+The campaign script is `results/raw/logs/p7-compress-campaign.sh`, its log is `results/raw/logs/p7-compress-campaign.log`. **The user stopped the campaign** on 2026-11-14 while `compress-setup` for the tree Span a = 2 configuration was running. That job wrote no record; its log stub `20261114T093300Z-bcfd22a8.{out,err}` is kept. The two remaining configurations were run on 2026-11-16 with the same script body (only their two `cfg` lines), at `9fc575e`.
 
 | Configuration | Planned records | Present |
 |---|---|---|
@@ -97,31 +100,29 @@ The campaign script is `results/raw/logs/p7-compress-campaign.sh`, its log is `r
 | tree Direct a = 2, L = 8, seeds 101/202/303 | 10 | **10** |
 | chain Direct K = 4, T = 16, seed 101 | 4 | **4** |
 | chain Span K = 2, T = 16, seed 101 | 4 | **4** (cold record not usable for timing, §3.3) |
-| tree Span a = 2, L = 8, seed 101 | 4 | **0** (setup was running when the campaign was stopped) |
-| chain Direct K = 16, T = 16, seed 101 | 4 | **0** (not reached) |
+| tree Span a = 2, L = 8, seed 101 | 4 | **4** (2026-11-16) |
+| chain Direct K = 16, T = 16, seed 101 | 4 | **4** (2026-11-16) |
 
-Total: 28 of 36 planned records. **Missing:** chains with K = 16 (so PLAN's "chains with K ∈ {2, 4, 16}" is covered by records only for K = 2 and 4) and the tree Span record. Tree Span is covered by the unit tests (`test_compress_tree_span`, account 12,103 B), but it has no timing record. The campaign was not restarted.
+Total: **36 of 36** planned records, all `status = success`, every verify record `verification_ok = true`. Chains are covered for K ∈ {2, 4, 16} and trees for a = 2 in both variants. One record (chain Span K = 2 seed 101 cold) is not usable for timing (§3.3).
 
-## 4. Suite results (**the full definition of done was NOT re-run at the final commit**)
+## 4. Suite results
 
-The user stopped the final definition-of-done run (the kilonova suite was killed twice, once by the campaign cleanup and once on request), so there are **no full-suite totals for this branch**. What last passed:
+Full definition of done re-run at `9fc575e` on 2026-11-16 (development laptop, `--release`, `--test-threads=1`). The user had stopped an earlier run on 2026-11-14.
 
-| Command | Result | When / commit |
-|---|---|---|
-| `cargo fmt --all --check` | clean | 2026-11-14, `453e403` (unchanged code at the final commit; only docs and records were added later) |
-| clippy (`-p kn-ccs -p kn-run -p nova-snark --release --all-targets -- -W clippy::all -A clippy::len_without_is_empty`) | clean (only the pre-existing workspace `resolver` warning) | 2026-11-14, working tree of `453e403` |
-| `cargo test -p nova-snark --release --lib kilonova::compress -- --test-threads=1` | **17 passed**, 0 failed (575 s, peak RSS 1.9 GiB) | 2026-11-14, working tree that became `e284eaa` (before the clippy-only test edit in `453e403`) |
-| `cargo test -p kn-run --release -- --test-threads=1` | **12 passed** (1 lib + 2 new `compress_cli_*` + 9 runner) | 2026-11-14, `e284eaa` |
-| `cargo test -p nova-snark --release --lib kilonova -- --test-threads=1` (whole suite) | **not run to completion on this branch** (killed; the P6 baseline was 109 passed / 10 ignored; expected 126 / 10 with the 17 compress tests, not verified) | — |
-| `nova::tests::test_` | **not run on this branch** | — |
-| `cargo test -p kn-ccs --release` | **not run on this branch** (kn-ccs code unchanged) | — |
+| Command | Result |
+|---|---|
+| `cargo fmt --all --check` | clean |
+| clippy (`-p kn-ccs -p kn-run -p nova-snark --release --all-targets -- -W clippy::all -A clippy::len_without_is_empty`) | clean (only the pre-existing workspace `resolver` warning) |
+| `cargo test -p nova-snark --release --lib kilonova -- --test-threads=1` | **126 passed, 0 failed, 10 ignored** (3,451 s). P6 baseline 109 / 10, plus the 17 `kilonova::compress` tests. |
+| `cargo test -p nova-snark --release --lib nova::tests::test_ -- --test-threads=1` | 11 passed, 2 ignored |
+| `cargo test -p kn-ccs --release` | 21 passed |
+| `cargo test -p kn-run --release -- --test-threads=1` | 12 passed (10 + 2 `compress_cli_*` separate-process tests) |
 
-Code changed outside `compress/` (refactors in `ivc`, `pcd`, `family`, `hfs::structure`; visibility in `ipa_pc.rs`; an accessor in `snark.rs`) is exercised indirectly by the compress tests and the campaign (setup, recursion and the uncompressed verifiers ran in every record), but the P4/P5/P6 tests that pin pp digests, link hashes and transcripts were **not re-run** after the refactor. That is the first thing to do before merging.
+The P4/P5/P6 tests that pin pp digests, link hashes and transcripts are part of the kilonova suite and all pass, so the refactors outside `compress/` (§1) changed no digest, hash or transcript. The 10 ignored long tests (P4/P5 long chains, P6 64-leaf trees) were not re-run on this branch; they passed on `p6-pcd`, and the values they depend on are pinned by tests that passed here.
 
 ## 5. Known limitations and open items
 
 - **P7b not done.** The final verifier is the reference basis: O(K·N) in the index, with the whole family as public material (266–531 MB here, linear in K). Spark-style sparse evaluation, terminal recursive binding and separate row/col/val encodings are not implemented.
-- **K = 16 not measured** (campaign stopped; §3.4). Neither is a tree Span timing record.
 - **Verifier time.** The IPA verifier and Spartan-with-IPA verifier are linear in their vector sizes (2^{s′} and CycleFold rows): the proofs are succinct in size, not in verifier time (as in inherited Nova). Cold verification is dominated by deriving keys from labels (hash-to-curve of 2^{s′} generators) and by decoding and hashing the material, not by verify-final itself.
 - **Direct reveals λ\*** at the end (K elements). This is not a zero-knowledge claim, which is not made anyway.
 - **No soundness proof.** The composition (final native fold, masked IPA, Spartan, link hash) is argued in spec §12, not proven. The tail-shift test shows why the mask is necessary; it does not show that the mask suffices.
